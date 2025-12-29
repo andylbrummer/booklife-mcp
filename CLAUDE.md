@@ -65,6 +65,136 @@ mcp.AddTool(s.mcpServer, &mcp.Tool{Name: "tool_name", Description: "..."}, s.han
 
 **Rate Limiting**: Open Library client uses `golang.org/x/time/rate` for 10 req/sec limiting.
 
+**Enrichment Strategy**: Hardcover → Open Library → Google Books fallback chain for book metadata enrichment. Hardcover provides ISBN lookup and rich metadata (genres, tags, series), while OL/GB provide subject/category data when Hardcover lacks the book.
+
+## Hardcover GraphQL API
+
+**Endpoint**: `https://api.hardcover.app/v1/graphql`
+
+**Authentication**: Bearer token in `Authorization` header
+```
+Authorization: Bearer YOUR_API_KEY
+```
+
+**Get API Key**: https://hardcover.app/settings/api
+
+### Available Enrichment Fields
+
+Based on Hardcover's GraphQL schema (current as of December 2025), books support these enrichment fields:
+
+```graphql
+{
+  books(where: {id: {_eq: $id}}) {
+    id
+    title
+    subtitle
+    description
+    pages
+    release_date
+    rating
+    ratings_count
+    cached_image  # JSON object with { url: string } structure
+    cached_tags   # JSON field containing all tags organized by category
+
+    # Authors
+    contributions {
+      author {
+        id
+        name
+      }
+    }
+
+    # ISBNs
+    editions {
+      isbn_10
+      isbn_13
+    }
+
+    # Series information
+    book_series {
+      series {
+        name
+      }
+      position
+    }
+  }
+}
+```
+
+### Tag System (cached_tags)
+
+**IMPORTANT:** As of December 2025, Hardcover uses `cached_tags` (a JSON field) instead of the old `tags` relationship.
+
+The `cached_tags` field returns a JSON object with these categories:
+- **Genre**: Fiction, Mystery, Science Fiction, Fantasy, etc.
+- **Mood**: Dark, Hopeful, Funny, Mysterious, etc.
+- **ContentWarning**: Content warnings flagged by users
+
+**Note:** The old "theme" category no longer exists in the API. Themes should be derived from genres/moods or extracted from descriptions.
+
+Each tag entry includes:
+```json
+{
+  "tag": "Science Fiction",
+  "tagSlug": "science-fiction",
+  "category": "Genre",
+  "categorySlug": "genre",
+  "spoiler": false,
+  "count": 150
+}
+```
+
+Access tags in code:
+```go
+// cached_tags is a map[string][]Tag
+genres := book.CachedTags["Genre"]
+moods := book.CachedTags["Mood"]
+```
+
+### Enrichment Query Pattern
+
+For efficient enrichment, use this query to fetch all metadata:
+
+```graphql
+query GetBookEnrichment($id: Int!) {
+  books(where: {id: {_eq: $id}}, limit: 1) {
+    id
+    title
+    subtitle
+    description
+    pages
+    release_date
+    cached_image
+    cached_tags
+    contributions {
+      author { name }
+    }
+    editions {
+      isbn_10
+      isbn_13
+    }
+    book_series {
+      series { name }
+      position
+    }
+  }
+}
+```
+
+### Rate Limits
+
+Hardcover doesn't publicly document rate limits, but reasonable usage:
+- Use batched queries when possible
+- Cache results to minimize API calls
+- Implement exponential backoff on errors
+
+### Integration Tests
+
+Run enrichment field discovery tests with:
+```bash
+HARDCOVER_API_KEY=your_key go test -v -run TestBookEnrichmentFields ./internal/providers/hardcover/
+```
+
 ## MCP Interface
 
 ### Tools
@@ -84,6 +214,33 @@ mcp.AddTool(s.mcpServer, &mcp.Tool{Name: "tool_name", Description: "..."}, s.han
 - `book_summary` - Book summaries with spoiler control
 - `reading_wrap_up` - Period reading summaries
 - `pick_from_tbr` - TBR decision helper
+
+## Libby/OverDrive TLS Certificate Issue
+
+**CRITICAL**: OverDrive's API uses a certificate that doesn't match the actual hostname (`thunder.odrsre.overdrive.com`), causing TLS verification failures. This is an OverDrive infrastructure issue, not a bug in BookLife.
+
+### Required Configuration
+
+All Libby configurations **must** include `skip-tls-verify true`:
+
+```kdl
+libby enabled=true {
+    skip-tls-verify true
+}
+```
+
+### Error Symptoms
+
+Without `skip-tls-verify`, Libby API calls fail with:
+```
+Error: searching library: TLS certificate error for https://thunder.api.overdrive.com/...
+x509: certificate is valid for *.api.overdrive.com, *.hq.overdrive.com, *.overdrive.com,
+not thunder.odrsre.overdrive.com
+```
+
+### Security Note
+
+This is **temporary** until OverDrive fixes their certificate configuration. The skip applies only to Libby API calls, not other providers. All data is still encrypted in transit (just without hostname verification).
 
 ## Implementation Status
 
