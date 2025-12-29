@@ -61,10 +61,10 @@ func calculatePagedResult(page, pageSize, totalCount int) PagedResult {
 
 // PagedResult contains pagination metadata for list responses
 type PagedResult struct {
-	Page       int `json:"page"`
-	PageSize   int `json:"page_size"`
-	TotalCount int `json:"total_count"`
-	TotalPages int `json:"total_pages"`
+	Page       int  `json:"page"`
+	PageSize   int  `json:"page_size"`
+	TotalCount int  `json:"total_count"`
+	TotalPages int  `json:"total_pages"`
 	HasNext    bool `json:"has_next"`
 	HasPrev    bool `json:"has_prev"`
 }
@@ -85,6 +85,64 @@ func formatPagingFooter(paged PagedResult, itemCount int) string {
 }
 
 // ===== Format Helpers for Cross-Tool Data Roundtripping =====
+
+// createResponseMeta creates automation metadata for AI agents
+// This helps AI agents understand the response and suggest next actions
+func createResponseMeta(hasResults bool, actionNeeded bool, suggestedNext []string, automationFriendly bool, confidence float64) map[string]any {
+	meta := map[string]any{
+		"has_results":         hasResults,
+		"action_needed":       actionNeeded,
+		"automation_friendly": automationFriendly,
+	}
+
+	if len(suggestedNext) > 0 {
+		meta["suggested_next"] = suggestedNext
+	}
+
+	if confidence > 0 {
+		meta["confidence"] = confidence
+	}
+
+	return meta
+}
+
+// formatIDsForDisplay creates a unified ID format for cross-tool usage
+// Format: "IDs: { book_id: 123, isbn: 9780593135204 }"
+func formatIDsForDisplay(idMap map[string]string, indent string) string {
+	if len(idMap) == 0 {
+		return ""
+	}
+
+	var pairs []string
+	// Order: book_id, isbn, media_id, then others alphabetically
+	preferredOrder := []string{"book_id", "isbn", "media_id"}
+
+	for _, key := range preferredOrder {
+		if value, ok := idMap[key]; ok && value != "" {
+			pairs = append(pairs, fmt.Sprintf("%s: %s", key, value))
+		}
+	}
+
+	// Add any remaining IDs
+	for key, value := range idMap {
+		isPreferred := false
+		for _, pk := range preferredOrder {
+			if key == pk {
+				isPreferred = true
+				break
+			}
+		}
+		if !isPreferred && value != "" {
+			pairs = append(pairs, fmt.Sprintf("%s: %s", key, value))
+		}
+	}
+
+	if len(pairs) == 0 {
+		return ""
+	}
+
+	return fmt.Sprintf("%sIDs: { %s }\n", indent, strings.Join(pairs, ", "))
+}
 
 // formatBookForDisplay creates a detailed, human-readable representation with actionable IDs
 // Returns text that shows all identifiers needed for cross-tool usage:
@@ -115,17 +173,17 @@ func formatBookForDisplay(book models.Book, index int) string {
 	}
 
 	// === CRITICAL: Identifiers for cross-tool usage ===
-	var ids []string
+	idMap := make(map[string]string)
 	if book.HardcoverID != "" {
-		ids = append(ids, fmt.Sprintf("book_id=%s", book.HardcoverID))
+		idMap["book_id"] = book.HardcoverID
 	}
 	if book.ISBN13 != "" {
-		ids = append(ids, fmt.Sprintf("isbn=%s", book.ISBN13))
+		idMap["isbn"] = book.ISBN13
 	} else if book.ISBN10 != "" {
-		ids = append(ids, fmt.Sprintf("isbn=%s", book.ISBN10))
+		idMap["isbn"] = book.ISBN10
 	}
-	if len(ids) > 0 {
-		sb.WriteString(fmt.Sprintf("    IDs: %s\n", strings.Join(ids, ", ")))
+	if idStr := formatIDsForDisplay(idMap, "    "); idStr != "" {
+		sb.WriteString(idStr)
 	}
 
 	// User status if available
@@ -201,7 +259,8 @@ func formatLibraryAvailabilityForDisplay(avail *models.LibraryAvailability, inde
 	sb.WriteString(fmt.Sprintf("%sLibrary Availability (%s):\n", indent, avail.LibraryName))
 
 	// === CRITICAL: media_id for place_hold ===
-	sb.WriteString(fmt.Sprintf("%s  media_id: %s\n", indent, avail.MediaID))
+	idMap := map[string]string{"media_id": avail.MediaID}
+	sb.WriteString(formatIDsForDisplay(idMap, indent+"  "))
 
 	if avail.EbookAvailable {
 		sb.WriteString(fmt.Sprintf("%s  ✅ Ebook: Available now (%d copies)\n", indent, avail.EbookCopies))
@@ -236,6 +295,18 @@ func formatAuthorsList(authors []models.Contributor) string {
 
 // registerTools registers all BookLife tools with the MCP server
 func (s *Server) registerTools() {
+	// === Info/Help (Progressive Discovery) ===
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name: "info",
+		Description: `Get help and discover BookLife capabilities.
+Progressive discovery system for tools, workflows, and categories.
+Example: {} - Show overview
+Example: {"category": "hardcover"} - List Hardcover tools
+Example: {"tool": "libby_place_hold"} - Detailed tool help
+Example: {"workflow": "find_and_read"} - Step-by-step workflow guide`,
+	}, s.handleInfo)
+
 	// === Hardcover (Reading Tracker) ===
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
@@ -249,8 +320,9 @@ Example: {"query": "Andy Weir", "page_size": 5, "sort_by": "rating"}`,
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name: "hardcover_get_my_library",
 		Description: `Get your reading list from Hardcover.
-Returns detailed book information with your reading status.
-Example: {"status": "reading"} - currently reading
+Progressive detail levels for token efficiency.
+Example: {"detail": "summary"} - quick stats (200 tokens)
+Example: {"status": "reading"} - currently reading (list mode)
 Example: {"status": "want-to-read"} - TBR list
 Example: {"status": "read", "page_size": 10} - recently finished`,
 	}, s.handleGetMyLibrary)
@@ -363,28 +435,28 @@ Example: {"title": "The Way of Kings", "author": "Brandon Sanderson"}`,
 	// === Local History Store ===
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
-		Name:        "history_import_timeline",
+		Name: "history_import_timeline",
 		Description: `Import Libby reading history from a timeline export URL.
 This imports your complete Libby reading history into the local store.
 Example: {"url": "https://share.libbyapp.com/data/{uuid}/libbytimeline-all-loans.json"}`,
 	}, s.handleImportTimeline)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
-		Name:        "history_sync_current_loans",
+		Name: "history_sync_current_loans",
 		Description: `Sync current Libby loans to local history store.
 This captures your current checkouts for historical tracking.
 Example: {}`,
 	}, s.handleSyncCurrentLoans)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
-		Name:        "history_get",
+		Name: "history_get",
 		Description: `Get reading history from local store with pagination.
 Returns all imported timeline entries and synced loans.
 Example: {"page": 1, "page_size": 20}`,
 	}, s.handleGetLocalHistory)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
-		Name:        "history_search",
+		Name: "history_search",
 		Description: `Search reading history by title or author.
 Searches all imported timeline entries for matches.
 Example: {"query": "Sanderson", "page": 1, "page_size": 20}
@@ -392,9 +464,120 @@ Example: {"query": "Mistborn"}`,
 	}, s.handleSearchLocalHistory)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
-		Name:        "history_stats",
+		Name: "history_stats",
 		Description: `Get reading statistics from local history store.
 Returns breakdowns by format, library, year, and totals.
 Example: {}`,
 	}, s.handleGetHistoryStats)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name: "history_export_for_import",
+		Description: `Export reading history as Goodreads-compatible CSV for batch importing.
+Generates a CSV file that can be imported into Hardcover, Goodreads, or LibraryThing.
+
+Filters (optional, default exports all returned books):
+  activity  - "Returned" (default), "Borrowed", "Reserved", "CheckedIn"
+  format    - "audiobook", "ebook", "book", "magazine"
+  limit     - Maximum number of books to export (default: no limit)
+
+Output:
+  Returns file path and count of exported books.
+
+Examples:
+  {} - Export all returned books (complete library)
+  {"activity": "Borrowed"} - Export all checkouts
+  {"format": "audiobook", "limit": 50} - Export 50 most recent audiobooks`,
+	}, s.handleExportForImport)
+
+	// === Sync (Progressive Disclosure) ===
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name: "sync",
+		Description: `Sync reading history between services (Libby → Hardcover).
+Marks returned library books as "read" in Hardcover.
+
+Actions (progressive disclosure):
+  status  - Show pending count and last sync (default)
+  preview - List books that will be synced
+  run     - Execute sync, show summary
+  details - Show sync state for specific entry
+
+Examples:
+  {} or {"action": "status"} - quick status check
+  {"action": "preview"} - see what will sync
+  {"action": "run"} - sync returned books to Hardcover
+  {"action": "run", "dry_run": true} - test without changes
+  {"action": "details", "entry_id": "abc123"} - entry details`,
+	}, s.handleSync)
+
+	// === Content-Based Recommendations (LLM-Powered) ===
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name: "book_get_with_analysis",
+		Description: `Get detailed book analysis with enriched metadata.
+Shows themes, topics, mood, complexity, and related books.
+Requires the book to be enriched first (use enrichment_enrich_history).
+
+Example: {"title": "Project Hail Mary", "author": "Andy Weir"}`,
+	}, s.handleGetBookWithAnalysis)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name: "book_find_similar",
+		Description: `Find books similar to a given book based on themes, topics, and mood.
+Content-based recommendation using enriched metadata.
+
+Example: {"title": "Project Hail Mary", "author": "Andy Weir", "limit": 10}`,
+	}, s.handleFindSimilarBooks)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name: "profile_get",
+		Description: `Get your reading profile with preferences and patterns.
+Shows format preferences, top genres, most-read authors, completion rate, reading cadence, and streaks.
+
+Example: {}`,
+	}, s.handleGetReadingProfile)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name: "enrichment_enrich_history",
+		Description: `Enriches reading history with metadata from Open Library and Google Books API.
+
+Purpose: Fetches book descriptions, themes, topics, mood, and series data. Required before using content-based recommendation tools (find_similar_books, get_book_with_analysis).
+
+Behavior: Processes entire library asynchronously in background job. Sends progress notifications via MCP. Already-enriched books are skipped unless force=true.
+
+Parameters:
+  force (boolean, optional): Re-enrich all books, even if already enriched. Default: false
+
+Returns: Job ID, total books count, initial status
+
+Use enrichment_status to monitor progress after starting.`,
+	}, s.handleEnrichHistory)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name: "enrichment_status",
+		Description: `Queries progress and status of an enrichment job.
+
+Purpose: Monitor background enrichment operations with detailed metrics.
+
+Parameters:
+  job_id (string, optional): Specific job to query. Defaults to most recent job if omitted.
+
+Returns: Job status (pending/running/completed/failed/cancelled), processed/successful/failed book counts, current book being processed, elapsed time, estimated time remaining, average time per book, recent errors (last 10).
+
+Use this to check progress if MCP notifications are not visible or for historical job data.`,
+	}, s.handleEnrichmentStatus)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name: "enrichment_cancel",
+		Description: `Cancels a running background enrichment job.
+
+Purpose: Stop long-running enrichment operations gracefully. Job stops after current book completes.
+
+Parameters:
+  job_id (string, required): Job ID to cancel. Get from enrich_history response or enrichment_status.
+
+Returns: Cancellation confirmation with job ID.
+
+Note: Already-enriched books remain enriched. Partial progress is preserved.`,
+	}, s.handleEnrichmentCancel)
 }

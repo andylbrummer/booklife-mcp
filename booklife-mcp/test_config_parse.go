@@ -2,8 +2,8 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"github.com/user/booklife-mcp/internal/config"
+	"os"
 )
 
 func main() {
@@ -12,8 +12,8 @@ func main() {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("Success! LocalBookstores enabled=%v, stores=%d\n", 
-		cfg.Providers.LocalBookstores.Enabled, 
+	fmt.Printf("Success! LocalBookstores enabled=%v, stores=%d\n",
+		cfg.Providers.LocalBookstores.Enabled,
 		len(cfg.Providers.LocalBookstores.Stores))
 	for i, s := range cfg.Providers.LocalBookstores.Stores {
 		fmt.Printf("Store %d: ID=%s Name=%s Location=%s\n", i, s.ID, s.Name, s.Location)

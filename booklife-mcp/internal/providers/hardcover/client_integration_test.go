@@ -340,7 +340,7 @@ func TestIntegration_HardcoverClient_StatusIDMapping(t *testing.T) {
 		{"reading", 2},
 		{"read", 3},
 		{"dnf", 5},
-		{"all", 0}, // special case
+		{"all", 0},     // special case
 		{"unknown", 0}, // default fallback
 	}
 

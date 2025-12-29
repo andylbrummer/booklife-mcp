@@ -23,17 +23,17 @@ import (
 // Client is the Libby/OverDrive API client
 // Based on reverse-engineered API from libby-calibre-plugin
 type Client struct {
-	identity       *Identity
-	libraries      []Library
-	skipTLSVerify  bool
+	identity      *Identity
+	libraries     []Library
+	skipTLSVerify bool
 }
 
 // Identity represents the Libby device/user identity
 type Identity struct {
-	Clone     string `json:"clone"`
-	ChipKey   string `json:"chip_key"`
-	ChipCode  string `json:"chip_code"`
-	DeviceID  string `json:"device_id"`
+	Clone    string `json:"clone"`
+	ChipKey  string `json:"chip_key"`
+	ChipCode string `json:"chip_code"`
+	DeviceID string `json:"device_id"`
 }
 
 // Library represents a linked library card
@@ -333,18 +333,18 @@ func (c *Client) Search(ctx context.Context, query string, formats []string, ava
 
 	var result struct {
 		Items []struct {
-			ID            string `json:"id"`
-			Title         string `json:"title"`
-			Subtitle      string `json:"subtitle"`
-			FirstCreator  string `json:"firstCreatorName"` // This is a string, not an object
-			Formats []struct {
-				ID           string `json:"id"`
-				Name         string `json:"name"`
-				IsAudiobook  bool   `json:"isAudiobook"`
-				IsEbook      bool   `json:"isEbook"`
-				Available    bool   `json:"isAvailable"`
-				OwnedCopies  int    `json:"ownedCopies"`
-				HoldsCount   int    `json:"holdsCount"`
+			ID           string `json:"id"`
+			Title        string `json:"title"`
+			Subtitle     string `json:"subtitle"`
+			FirstCreator string `json:"firstCreatorName"` // This is a string, not an object
+			Formats      []struct {
+				ID          string `json:"id"`
+				Name        string `json:"name"`
+				IsAudiobook bool   `json:"isAudiobook"`
+				IsEbook     bool   `json:"isEbook"`
+				Available   bool   `json:"isAvailable"`
+				OwnedCopies int    `json:"ownedCopies"`
+				HoldsCount  int    `json:"holdsCount"`
 			} `json:"formats"`
 			Covers struct {
 				Cover300Wide struct {
@@ -643,16 +643,16 @@ func (c *Client) GetHolds(ctx context.Context) ([]models.LibbyHold, error) {
 	// Parse response to check for holds field
 	var result struct {
 		Holds []struct {
-			ID                  string `json:"id"`
-			Title               string `json:"title"`
-			FirstCreator        string `json:"firstCreatorName"`
-			Cover300WideURL     string `json:"covers.cover300Wide.href"`
-			TypeName            string `json:"type.name"`
-			HoldListPosition    int    `json:"holdListPosition"`
-			EstimatedWaitDays   int    `json:"estimatedWaitDays"`
-			IsAvailable         bool   `json:"isAvailable"`
-			AutoBorrow          bool   `json:"autoBorrow"`
-			PlacedDate          string `json:"placedDate"`
+			ID                string `json:"id"`
+			Title             string `json:"title"`
+			FirstCreator      string `json:"firstCreatorName"`
+			Cover300WideURL   string `json:"covers.cover300Wide.href"`
+			TypeName          string `json:"type.name"`
+			HoldListPosition  int    `json:"holdListPosition"`
+			EstimatedWaitDays int    `json:"estimatedWaitDays"`
+			IsAvailable       bool   `json:"isAvailable"`
+			AutoBorrow        bool   `json:"autoBorrow"`
+			PlacedDate        string `json:"placedDate"`
 		} `json:"holds"`
 		Cards []Library `json:"cards"`
 	}

@@ -5,7 +5,7 @@ import "time"
 // Book represents a unified book entity across all sources
 type Book struct {
 	// Universal identifiers
-	ID     string `json:"id"`               // Internal BookLife ID
+	ID     string `json:"id"` // Internal BookLife ID
 	ISBN10 string `json:"isbn10,omitempty"`
 	ISBN13 string `json:"isbn13,omitempty"`
 
@@ -86,7 +86,7 @@ type SeriesInfo struct {
 
 // UserBookStatus represents user's personal data about a book
 type UserBookStatus struct {
-	Status       string     `json:"status"` // reading, read, want-to-read, dnf
+	Status       string     `json:"status"`             // reading, read, want-to-read, dnf
 	Progress     int        `json:"progress,omitempty"` // 0-100
 	Rating       float64    `json:"rating,omitempty"`
 	Review       string     `json:"review,omitempty"`
@@ -102,9 +102,9 @@ type LibraryAvailability struct {
 	Formats     []string `json:"formats"` // ebook, audiobook
 
 	// Per-format availability
-	EbookAvailable     bool `json:"ebook_available"`
-	EbookCopies        int  `json:"ebook_copies"`
-	EbookWaitlistSize  int  `json:"ebook_waitlist_size"`
+	EbookAvailable    bool `json:"ebook_available"`
+	EbookCopies       int  `json:"ebook_copies"`
+	EbookWaitlistSize int  `json:"ebook_waitlist_size"`
 
 	AudiobookAvailable    bool `json:"audiobook_available"`
 	AudiobookCopies       int  `json:"audiobook_copies"`
@@ -129,57 +129,57 @@ type LibbyLoan struct {
 
 // LibbySearchResult represents a library catalog search result
 type LibbySearchResult struct {
-	ID            string `json:"id"`
-	MediaID       string `json:"media_id"`
-	Title         string `json:"title"`
-	Subtitle      string `json:"subtitle,omitempty"`
-	Author        string `json:"author"`
-	ISBN          string `json:"isbn,omitempty"`
-	Publisher     string `json:"publisher,omitempty"`
+	ID             string `json:"id"`
+	MediaID        string `json:"media_id"`
+	Title          string `json:"title"`
+	Subtitle       string `json:"subtitle,omitempty"`
+	Author         string `json:"author"`
+	ISBN           string `json:"isbn,omitempty"`
+	Publisher      string `json:"publisher,omitempty"`
 	PublishingYear int    `json:"publishing_year,omitempty"`
-	CoverURL      string `json:"cover_url,omitempty"`
-	Format        struct {
+	CoverURL       string `json:"cover_url,omitempty"`
+	Format         struct {
 		Ebook     bool `json:"ebook"`
 		Audiobook bool `json:"audiobook"`
 		Magazine  bool `json:"magazine"`
 	} `json:"format"`
-	IsAvailable    bool `json:"is_available"`
-	WaitListSize   int  `json:"wait_list_size"`
+	IsAvailable  bool `json:"is_available"`
+	WaitListSize int  `json:"wait_list_size"`
 }
 
 // LibbyHistoryItem represents a past loan or activity
 type LibbyHistoryItem struct {
-	ID            string    `json:"id"`
-	MediaID       string    `json:"media_id"`
-	Title         string    `json:"title"`
-	Author        string    `json:"author"`
-	Format        string    `json:"format"`
-	CheckoutDate  time.Time `json:"checkout_date"`
-	ReturnDate    time.Time `json:"return_date"`
-	DaysKept      int       `json:"days_kept"` // How long the user had it checked out
+	ID           string    `json:"id"`
+	MediaID      string    `json:"media_id"`
+	Title        string    `json:"title"`
+	Author       string    `json:"author"`
+	Format       string    `json:"format"`
+	CheckoutDate time.Time `json:"checkout_date"`
+	ReturnDate   time.Time `json:"return_date"`
+	DaysKept     int       `json:"days_kept"` // How long the user had it checked out
 }
 
 // TimelineEntry represents an entry from Libby's timeline export
 type TimelineEntry struct {
-	Title     string    `json:"title"`
-	TitleID   string    `json:"title_id"`
-	Author    string    `json:"author"`
-	Publisher string    `json:"publisher"`
-	ISBN      string    `json:"isbn"`
-	Timestamp int64     `json:"timestamp"` // Unix milliseconds
-	Activity  string    `json:"activity"`  // "Borrowed", "Returned", etc.
-	Details   string    `json:"details"`
-	Library   string    `json:"library"`
-	LibraryKey string   `json:"library_key"`
-	Format    string    `json:"format"`    // audiobook, ebook, magazine
-	CoverURL  string    `json:"cover_url"`
-	Color     string    `json:"color"`
+	Title      string `json:"title"`
+	TitleID    string `json:"title_id"`
+	Author     string `json:"author"`
+	Publisher  string `json:"publisher"`
+	ISBN       string `json:"isbn"`
+	Timestamp  int64  `json:"timestamp"` // Unix milliseconds
+	Activity   string `json:"activity"`  // "Borrowed", "Returned", etc.
+	Details    string `json:"details"`
+	Library    string `json:"library"`
+	LibraryKey string `json:"library_key"`
+	Format     string `json:"format"` // audiobook, ebook, magazine
+	CoverURL   string `json:"cover_url"`
+	Color      string `json:"color"`
 }
 
 // TimelineResponse represents the JSON response from Libby timeline export
 type TimelineResponse struct {
-	Version  int              `json:"version"`
-	Timeline []TimelineEntry  `json:"timeline"`
+	Version  int             `json:"version"`
+	Timeline []TimelineEntry `json:"timeline"`
 }
 
 // LibbyHold represents a library hold
@@ -220,16 +220,16 @@ type TrendingBook struct {
 
 // ReadingStats represents reading statistics
 type ReadingStats struct {
-	Year           int                `json:"year"`
-	BooksRead      int                `json:"books_read"`
-	PagesRead      int                `json:"pages_read"`
-	AudioHours     float64            `json:"audio_hours"`
-	AverageRating  float64            `json:"average_rating"`
-	GenreBreakdown map[string]int     `json:"genre_breakdown"`
-	MonthlyBreakdown map[string]int   `json:"monthly_breakdown"`
-	TopRated       []Book             `json:"top_rated"`
-	LongestBook    *Book              `json:"longest_book,omitempty"`
-	ShortestBook   *Book              `json:"shortest_book,omitempty"`
+	Year             int            `json:"year"`
+	BooksRead        int            `json:"books_read"`
+	PagesRead        int            `json:"pages_read"`
+	AudioHours       float64        `json:"audio_hours"`
+	AverageRating    float64        `json:"average_rating"`
+	GenreBreakdown   map[string]int `json:"genre_breakdown"`
+	MonthlyBreakdown map[string]int `json:"monthly_breakdown"`
+	TopRated         []Book         `json:"top_rated"`
+	LongestBook      *Book          `json:"longest_book,omitempty"`
+	ShortestBook     *Book          `json:"shortest_book,omitempty"`
 }
 
 // UnifiedBookResult represents the result of find_book_everywhere

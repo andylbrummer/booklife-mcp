@@ -118,7 +118,10 @@ func TestEnrichmentServiceRealAPIs(t *testing.T) {
 
 	t.Run("EnrichAndFindSimilar", func(t *testing.T) {
 		// Enrich multiple books to test similarity
-		books := []struct{ id int; title, author, isbn string }{
+		books := []struct {
+			id                  int
+			title, author, isbn string
+		}{
 			{10, "The Fellowship of the Ring", "J.R.R. Tolkien", ""},
 			{11, "The Two Towers", "J.R.R. Tolkien", ""},
 			{12, "The Return of the King", "J.R.R. Tolkien", ""},
@@ -323,4 +326,3 @@ func TestGoogleBooksEnricherRealAPI(t *testing.T) {
 		t.Logf("✓ Google Books without API key works: %s", data.Title)
 	})
 }
-

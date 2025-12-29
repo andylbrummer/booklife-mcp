@@ -13,14 +13,14 @@ import (
 
 // SearchBooksInput for the search_books tool
 type SearchBooksInput struct {
-	Query   string `json:"query"`
+	Query   string   `json:"query"`
 	Sources []string `json:"sources,omitempty"`
 	// Pagination
 	PaginationParams `json:",inline"`
 	// Filtering
 	Format    []string `json:"format,omitempty"`     // Filter by format: ebook, audiobook, physical
-	MinRating float64   `json:"min_rating,omitempty"` // Minimum community rating
-	Genre     string    `json:"genre,omitempty"`      // Filter by genre
+	MinRating float64  `json:"min_rating,omitempty"` // Minimum community rating
+	Genre     string   `json:"genre,omitempty"`      // Filter by genre
 	// Sorting
 	SortBy string `json:"sort_by,omitempty"` // relevance, rating, date, title
 }
@@ -29,6 +29,8 @@ type SearchBooksInput struct {
 type GetMyLibraryInput struct {
 	// Filtering
 	Status string `json:"status,omitempty"` // reading, read, want-to-read, dnf, all (default: all)
+	// Progressive detail
+	Detail string `json:"detail,omitempty"` // summary, list (default), full
 	// Sorting
 	SortBy string `json:"sort_by,omitempty"` // date_added, title, author, rating, progress
 	// Pagination
@@ -56,10 +58,10 @@ type AddToLibraryInput struct {
 
 func (s *Server) handleSearchBooks(ctx context.Context, req *mcp.CallToolRequest, input SearchBooksInput) (*mcp.CallToolResult, any, error) {
 	if input.Query == "" {
-		return nil, nil, fmt.Errorf("query is required")
+		return nil, nil, NewMissingQueryError()
 	}
 	if len(input.Query) > 500 {
-		return nil, nil, fmt.Errorf("query too long (max 500 characters)")
+		return nil, nil, NewQueryTooLongError(len(input.Query), 500)
 	}
 
 	// Get pagination parameters
@@ -108,18 +110,39 @@ func (s *Server) handleSearchBooks(ctx context.Context, req *mcp.CallToolRequest
 		sb.WriteString(formatPagingFooter(pagedResult, len(results)))
 	}
 
+	// Determine suggested next actions based on results
+	var suggestedNext []string
+	if len(results) > 0 {
+		suggestedNext = append(suggestedNext, "libby_check_availability")
+		suggestedNext = append(suggestedNext, "hardcover_add_to_library")
+	}
+
 	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			&mcp.TextContent{
-				Text: sb.String(),
+			Content: []mcp.Content{
+				&mcp.TextContent{
+					Text: sb.String(),
+				},
 			},
-		},
-	}, map[string]any{"books": results, "pagination": pagedResult}, nil
+		}, map[string]any{
+			"books":      results,
+			"pagination": pagedResult,
+			"_meta":      createResponseMeta(len(results) > 0, false, suggestedNext, true, 0.95),
+		}, nil
 }
 
 func (s *Server) handleGetMyLibrary(ctx context.Context, req *mcp.CallToolRequest, input GetMyLibraryInput) (*mcp.CallToolResult, any, error) {
 	if s.hardcover == nil {
-		return nil, nil, fmt.Errorf("Hardcover is not configured")
+		return nil, nil, NewHardcoverNotConfiguredError()
+	}
+
+	detail := input.Detail
+	if detail == "" {
+		detail = "list"
+	}
+
+	// Summary mode: fetch counts for all statuses without full book data
+	if detail == "summary" {
+		return s.handleGetMyLibrarySummary(ctx)
 	}
 
 	// Get pagination parameters
@@ -151,13 +174,100 @@ func (s *Server) handleGetMyLibrary(ctx context.Context, req *mcp.CallToolReques
 		sb.WriteString(formatPagingFooter(pagedResult, len(books)))
 	}
 
+	// Suggest next actions
+	var suggestedNext []string
+	if len(books) > 0 && status == "reading" {
+		suggestedNext = append(suggestedNext, "hardcover_update_reading_status")
+	}
+
 	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			&mcp.TextContent{
-				Text: sb.String(),
+			Content: []mcp.Content{
+				&mcp.TextContent{
+					Text: sb.String(),
+				},
 			},
-		},
-	}, map[string]any{"books": books, "status": status, "pagination": pagedResult}, nil
+		}, map[string]any{
+			"books":      books,
+			"status":     status,
+			"pagination": pagedResult,
+			"_meta":      createResponseMeta(len(books) > 0, false, suggestedNext, true, 0),
+		}, nil
+}
+
+// handleGetMyLibrarySummary provides a token-efficient summary of library status
+func (s *Server) handleGetMyLibrarySummary(ctx context.Context) (*mcp.CallToolResult, any, error) {
+	// Fetch small samples from each status to get counts and stats
+	statuses := []string{"reading", "want-to-read", "read"}
+	summary := make(map[string]any)
+
+	var sb strings.Builder
+	sb.WriteString("Library Summary\n\n")
+
+	for _, status := range statuses {
+		books, totalCount, err := s.hardcover.GetUserBooks(ctx, status, 0, 20)
+		if err != nil {
+			continue
+		}
+
+		summary[status] = map[string]any{
+			"count": totalCount,
+		}
+
+		switch status {
+		case "reading":
+			if totalCount > 0 {
+				// Calculate average progress
+				totalProgress := 0
+				for _, book := range books {
+					if book.UserStatus != nil {
+						totalProgress += book.UserStatus.Progress
+					}
+				}
+				avgProgress := totalProgress / len(books)
+				summary[status].(map[string]any)["avg_progress"] = avgProgress
+				sb.WriteString(fmt.Sprintf("Currently Reading: %d books (avg %d%% progress)\n", totalCount, avgProgress))
+			} else {
+				sb.WriteString("Currently Reading: 0 books\n")
+			}
+
+		case "want-to-read":
+			sb.WriteString(fmt.Sprintf("Want to Read (TBR): %d books\n", totalCount))
+
+		case "read":
+			if totalCount > 0 {
+				// Calculate average rating from sample
+				totalRating := 0.0
+				ratedCount := 0
+				for _, book := range books {
+					if book.UserStatus != nil && book.UserStatus.Rating > 0 {
+						totalRating += book.UserStatus.Rating
+						ratedCount++
+					}
+				}
+				if ratedCount > 0 {
+					avgRating := totalRating / float64(ratedCount)
+					summary[status].(map[string]any)["avg_rating"] = avgRating
+					sb.WriteString(fmt.Sprintf("Read: %d books (avg %.1f★)\n", totalCount, avgRating))
+				} else {
+					sb.WriteString(fmt.Sprintf("Read: %d books\n", totalCount))
+				}
+			} else {
+				sb.WriteString("Read: 0 books\n")
+			}
+		}
+	}
+
+	sb.WriteString("\n→ Use detail=\"list\" to see book lists\n")
+	sb.WriteString("→ Use status=\"reading\" to filter by status\n")
+
+	return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: sb.String()},
+			},
+		}, map[string]any{
+			"summary": summary,
+			"_meta":   createResponseMeta(true, false, []string{"hardcover_get_my_library"}, true, 0),
+		}, nil
 }
 
 func (s *Server) handleUpdateReadingStatus(ctx context.Context, req *mcp.CallToolRequest, input UpdateReadingStatusInput) (*mcp.CallToolResult, any, error) {

@@ -100,22 +100,22 @@ func (s *Server) handleBestWayToRead(ctx context.Context, req *mcp.CallToolReque
 		if err == nil && avail != nil {
 			if avail.EbookAvailable || avail.AudiobookAvailable {
 				options = append(options, map[string]any{
-					"priority":     1,
-					"source":       "library",
-					"action":       "borrow_now",
-					"cost":         "FREE",
-					"media_id":     avail.MediaID,
-					"description":  fmt.Sprintf("Available NOW at library via Libby (media_id: %s)", avail.MediaID),
+					"priority":    1,
+					"source":      "library",
+					"action":      "borrow_now",
+					"cost":        "FREE",
+					"media_id":    avail.MediaID,
+					"description": fmt.Sprintf("Available NOW at library via Libby (media_id: %s)", avail.MediaID),
 				})
 			} else {
 				options = append(options, map[string]any{
-					"priority":     2,
-					"source":       "library",
-					"action":       "place_hold",
-					"cost":         "FREE",
-					"media_id":     avail.MediaID,
-					"wait_days":    avail.EstimatedWaitDays,
-					"description":  fmt.Sprintf("Place hold at library - %d day wait (media_id: %s)", avail.EstimatedWaitDays, avail.MediaID),
+					"priority":    2,
+					"source":      "library",
+					"action":      "place_hold",
+					"cost":        "FREE",
+					"media_id":    avail.MediaID,
+					"wait_days":   avail.EstimatedWaitDays,
+					"description": fmt.Sprintf("Place hold at library - %d day wait (media_id: %s)", avail.EstimatedWaitDays, avail.MediaID),
 				})
 			}
 		}

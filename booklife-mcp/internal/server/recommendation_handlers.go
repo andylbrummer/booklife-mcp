@@ -21,15 +21,15 @@ import (
 
 // GetBookWithAnalysisInput for the book_get_with_analysis tool
 type GetBookWithAnalysisInput struct {
-	Title string `json:"title"`
+	Title  string `json:"title"`
 	Author string `json:"author"`
 }
 
 // FindSimilarBooksInput for the book_find_similar tool
 type FindSimilarBooksInput struct {
-	Title    string `json:"title"`
-	Author   string `json:"author"`
-	Limit    int    `json:"limit,omitempty"` // default 10
+	Title  string `json:"title"`
+	Author string `json:"author"`
+	Limit  int    `json:"limit,omitempty"` // default 10
 }
 
 // GetReadingProfileInput for the profile_get tool
@@ -173,13 +173,13 @@ func (s *Server) handleGetBookWithAnalysis(ctx context.Context, req *mcp.CallToo
 	}
 
 	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			&mcp.TextContent{Text: sb.String()},
-		},
-	}, map[string]any{
-		"title":  title,
-		"author": author,
-	}, nil
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: sb.String()},
+			},
+		}, map[string]any{
+			"title":  title,
+			"author": author,
+		}, nil
 }
 
 func (s *Server) handleFindSimilarBooks(ctx context.Context, req *mcp.CallToolRequest, input FindSimilarBooksInput) (*mcp.CallToolResult, any, error) {
@@ -286,14 +286,14 @@ func (s *Server) handleFindSimilarBooks(ctx context.Context, req *mcp.CallToolRe
 	}
 
 	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			&mcp.TextContent{Text: sb.String()},
-		},
-	}, map[string]any{
-		"source_title":  title,
-		"source_author": author,
-		"found":         len(similar),
-	}, nil
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: sb.String()},
+			},
+		}, map[string]any{
+			"source_title":  title,
+			"source_author": author,
+			"found":         len(similar),
+		}, nil
 }
 
 func (s *Server) handleGetReadingProfile(ctx context.Context, req *mcp.CallToolRequest, input GetReadingProfileInput) (*mcp.CallToolResult, any, error) {
@@ -317,12 +317,12 @@ func (s *Server) handleGetReadingProfile(ctx context.Context, req *mcp.CallToolR
 	}
 
 	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			&mcp.TextContent{Text: summary},
-		},
-	}, map[string]any{
-		"computed_at": profile.ComputedAt.Format(time.RFC3339),
-	}, nil
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: summary},
+			},
+		}, map[string]any{
+			"computed_at": profile.ComputedAt.Format(time.RFC3339),
+		}, nil
 }
 
 // EnrichmentEntry represents a book to be enriched
@@ -349,14 +349,14 @@ func (s *Server) handleEnrichHistory(ctx context.Context, req *mcp.CallToolReque
 
 	progress := job.GetProgress()
 	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			&mcp.TextContent{Text: fmt.Sprintf("🔄 Enrichment started in background\nJob ID: %s\nBooks to enrich: %d\n\nYou'll receive progress notifications.\nUse enrichment_status tool to check detailed progress.", job.ID, progress.TotalBooks)},
-		},
-	}, map[string]any{
-		"job_id":      job.ID,
-		"total_books": progress.TotalBooks,
-		"status":      string(progress.Status),
-	}, nil
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: fmt.Sprintf("🔄 Enrichment started in background\nJob ID: %s\nBooks to enrich: %d\n\nYou'll receive progress notifications.\nUse enrichment_status tool to check detailed progress.", job.ID, progress.TotalBooks)},
+			},
+		}, map[string]any{
+			"job_id":      job.ID,
+			"total_books": progress.TotalBooks,
+			"status":      string(progress.Status),
+		}, nil
 }
 
 // EnrichmentStatusInput defines input for enrichment_status tool
@@ -414,18 +414,18 @@ func (s *Server) handleEnrichmentStatus(ctx context.Context, req *mcp.CallToolRe
 	}
 
 	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			&mcp.TextContent{Text: sb.String()},
-		},
-	}, map[string]any{
-		"job_id":           progress.JobID,
-		"status":           string(progress.Status),
-		"total_books":      progress.TotalBooks,
-		"processed_books":  progress.ProcessedBooks,
-		"successful_books": progress.SuccessfulBooks,
-		"failed_books":     progress.FailedBooks,
-		"elapsed_seconds":  progress.ElapsedSeconds,
-	}, nil
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: sb.String()},
+			},
+		}, map[string]any{
+			"job_id":           progress.JobID,
+			"status":           string(progress.Status),
+			"total_books":      progress.TotalBooks,
+			"processed_books":  progress.ProcessedBooks,
+			"successful_books": progress.SuccessfulBooks,
+			"failed_books":     progress.FailedBooks,
+			"elapsed_seconds":  progress.ElapsedSeconds,
+		}, nil
 }
 
 // EnrichmentCancelInput defines input for enrichment_cancel tool

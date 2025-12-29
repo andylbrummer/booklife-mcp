@@ -21,7 +21,7 @@ func TestHandleSearchBooks(t *testing.T) {
 
 		s := &Server{hardcover: mock}
 		input := SearchBooksInput{
-			Query:           "test",
+			Query:            "test",
 			PaginationParams: PaginationParams{Page: 1, PageSize: 10},
 		}
 
@@ -53,7 +53,7 @@ func TestHandleSearchBooks(t *testing.T) {
 	t.Run("returns empty when no provider configured", func(t *testing.T) {
 		s := &Server{}
 		input := SearchBooksInput{
-			Query:           "test",
+			Query:            "test",
 			PaginationParams: PaginationParams{Page: 1, PageSize: 10},
 		}
 
@@ -82,7 +82,7 @@ func TestHandleSearchBooks(t *testing.T) {
 	t.Run("requires query", func(t *testing.T) {
 		s := &Server{}
 		input := SearchBooksInput{
-			Query:           "",
+			Query:            "",
 			PaginationParams: PaginationParams{Page: 1, PageSize: 10},
 		}
 

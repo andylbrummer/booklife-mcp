@@ -16,6 +16,21 @@ type Config struct {
 	Providers ProvidersConfig `kdl:"providers"`
 	Cache     CacheConfig     `kdl:"cache"`
 	Features  FeaturesConfig  `kdl:"features"`
+	Sync      SyncConfig      `kdl:"sync"`
+}
+
+// SyncConfig configures cross-service synchronization
+type SyncConfig struct {
+	// LibbyToHardcover syncs library returns to Hardcover "read" status
+	LibbyToHardcover LibbyToHardcoverSync `kdl:"libby-to-hardcover"`
+}
+
+type LibbyToHardcoverSync struct {
+	Enabled       bool `kdl:"enabled"`        // Enable automatic sync (default: false)
+	SyncOnReturn  bool `kdl:"sync-on-return"` // Sync when book is returned
+	AutoMarkRead  bool `kdl:"auto-mark-read"` // Automatically mark as "read" (default: true)
+	IncludeAudio  bool `kdl:"include-audio"`  // Include audiobooks (default: true)
+	IncludeEbooks bool `kdl:"include-ebooks"` // Include ebooks (default: true)
 }
 
 type ServerConfig struct {
@@ -38,12 +53,12 @@ type PreferencesConfig struct {
 }
 
 type ProvidersConfig struct {
-	Hardcover      HardcoverConfig      `kdl:"hardcover"`
-	Libby          LibbyConfig          `kdl:"libby"`
-	OpenLibrary    OpenLibraryConfig    `kdl:"open-library"`
-	Wikidata       WikidataConfig       `kdl:"wikidata"`
-	YouTube        YouTubeConfig        `kdl:"youtube"`
-	TikTok         TikTokConfig         `kdl:"tiktok"`
+	Hardcover       HardcoverConfig       `kdl:"hardcover"`
+	Libby           LibbyConfig           `kdl:"libby"`
+	OpenLibrary     OpenLibraryConfig     `kdl:"open-library"`
+	Wikidata        WikidataConfig        `kdl:"wikidata"`
+	YouTube         YouTubeConfig         `kdl:"youtube"`
+	TikTok          TikTokConfig          `kdl:"tiktok"`
 	LocalBookstores LocalBookstoresConfig `kdl:"local-bookstores"`
 }
 
@@ -78,7 +93,7 @@ type OpenLibraryConfig struct {
 }
 
 type WikidataConfig struct {
-	Enabled       bool   `kdl:"enabled"`
+	Enabled        bool   `kdl:"enabled"`
 	SPARQLEndpoint string `kdl:"sparql-endpoint"`
 }
 
@@ -158,48 +173,104 @@ func DefaultPath() (string, error) {
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("reading config file: %w", err)
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("config file not found: %s\n\n"+
+				"Fix:\n"+
+				"1. Create a config file at: %s\n"+
+				"2. Or use --config to specify a different location\n"+
+				"3. See example: https://github.com/user/booklife-mcp/blob/main/booklife.kdl.example", path, path)
+		}
+		return nil, fmt.Errorf("reading config file %s: %w", path, err)
 	}
 
 	var cfg Config
 	if err := kdl.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parsing config: %w", err)
+		return nil, fmt.Errorf("parsing config file %s: %w\n\n"+
+			"Fix:\n"+
+			"1. Check KDL syntax (https://kdl.dev)\n"+
+			"2. Verify all brackets and quotes are balanced\n"+
+			"3. Check for typos in field names", path, err)
 	}
 
-	// Resolve environment variables
-	resolveEnvVars(&cfg)
+	// Resolve environment variables (fails fast on missing vars)
+	if err := resolveEnvVars(&cfg); err != nil {
+		return nil, err
+	}
 
 	// Validate configuration
 	if err := validate(&cfg); err != nil {
-		return nil, fmt.Errorf("validating config: %w", err)
+		return nil, err
 	}
 
 	return &cfg, nil
 }
 
 // resolveEnvVars replaces env="VAR_NAME" patterns with actual environment values
-func resolveEnvVars(cfg *Config) {
-	cfg.Providers.Hardcover.APIKey = resolveEnv(cfg.Providers.Hardcover.APIKey)
-	cfg.Providers.YouTube.APIKey = resolveEnv(cfg.Providers.YouTube.APIKey)
-	cfg.Providers.TikTok.ScraperAPI = resolveEnv(cfg.Providers.TikTok.ScraperAPI)
+// Returns error if required environment variables are not set
+func resolveEnvVars(cfg *Config) error {
+	var err error
+
+	// Hardcover API key (required if enabled)
+	cfg.Providers.Hardcover.APIKey, err = resolveEnv(cfg.Providers.Hardcover.APIKey, "HARDCOVER_API_KEY", cfg.Providers.Hardcover.Enabled)
+	if err != nil {
+		return err
+	}
+
+	// YouTube API key (optional)
+	cfg.Providers.YouTube.APIKey, err = resolveEnv(cfg.Providers.YouTube.APIKey, "YOUTUBE_API_KEY", false)
+	if err != nil {
+		return err
+	}
+
+	// TikTok scraper API (optional)
+	cfg.Providers.TikTok.ScraperAPI, err = resolveEnv(cfg.Providers.TikTok.ScraperAPI, "TIKTOK_SCRAPER_API", false)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
-func resolveEnv(value string) string {
-	if strings.HasPrefix(value, "env=") {
-		envVar := strings.TrimPrefix(value, "env=")
-		envVar = strings.Trim(envVar, "\"")
-		return os.Getenv(envVar)
+// resolveEnv resolves a single environment variable reference
+// If required=true and the env var is not set, returns an error
+func resolveEnv(value, varName string, required bool) (string, error) {
+	if !strings.HasPrefix(value, "env=") {
+		return value, nil
 	}
-	return value
+
+	envVar := strings.TrimPrefix(value, "env=")
+	envVar = strings.Trim(envVar, "\"")
+
+	envValue := os.Getenv(envVar)
+	if envValue == "" && required {
+		return "", fmt.Errorf("required environment variable %q is not set\n\n"+
+			"Fix:\n"+
+			"1. Set the environment variable:\n"+
+			"   export %s='your-value-here'\n"+
+			"2. Or add it to your shell profile (~/.bashrc, ~/.zshrc, etc.)\n"+
+			"3. Or pass it when starting the server:\n"+
+			"   %s='your-value' booklife serve", envVar, envVar, envVar)
+	}
+
+	return envValue, nil
 }
 
 func validate(cfg *Config) error {
 	if cfg.Server.Name == "" {
-		return fmt.Errorf("server name is required")
+		return fmt.Errorf("server.name is required in config\n\n" +
+			"Fix: Add to your config file:\n" +
+			"  server {\n" +
+			"    name \"booklife\"\n" +
+			"    version \"1.0.0\"\n" +
+			"  }")
 	}
 
 	if cfg.Providers.Hardcover.Enabled && cfg.Providers.Hardcover.APIKey == "" {
-		return fmt.Errorf("Hardcover API key required when Hardcover is enabled")
+		return fmt.Errorf("Hardcover API key required when Hardcover is enabled\n\n" +
+			"Fix:\n" +
+			"1. Get an API key from: https://hardcover.app/settings/api\n" +
+			"2. Set environment variable: export HARDCOVER_API_KEY='your-key'\n" +
+			"3. Or disable Hardcover in config: hardcover { enabled false }")
 	}
 
 	// Note: Libby no longer requires clone code in config.

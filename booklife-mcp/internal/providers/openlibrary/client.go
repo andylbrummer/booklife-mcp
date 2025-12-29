@@ -15,10 +15,10 @@ import (
 
 // Client is the Open Library API client
 type Client struct {
-	httpClient    *http.Client
-	endpoint      string
+	httpClient     *http.Client
+	endpoint       string
 	coversEndpoint string
-	limiter       *rate.Limiter
+	limiter        *rate.Limiter
 }
 
 // NewClient creates a new Open Library client
@@ -50,7 +50,7 @@ func (c *Client) GetByISBN(ctx context.Context, isbn string) (*models.Book, erro
 
 	// Use the books API
 	endpoint := fmt.Sprintf("%s/api/books?bibkeys=ISBN:%s&format=json&jscmd=data", c.endpoint, isbn)
-	
+
 	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
 	if err != nil {
 		return nil, err
@@ -68,9 +68,9 @@ func (c *Client) GetByISBN(ctx context.Context, isbn string) (*models.Book, erro
 		Publishers []struct {
 			Name string `json:"name"`
 		} `json:"publishers"`
-		PublishDate string `json:"publish_date"`
-		NumberOfPages int `json:"number_of_pages"`
-		Subjects []struct {
+		PublishDate   string `json:"publish_date"`
+		NumberOfPages int    `json:"number_of_pages"`
+		Subjects      []struct {
 			Name string `json:"name"`
 		} `json:"subjects"`
 		Authors []struct {
@@ -82,8 +82,8 @@ func (c *Client) GetByISBN(ctx context.Context, isbn string) (*models.Book, erro
 			Large  string `json:"large"`
 		} `json:"cover"`
 		Identifiers struct {
-			ISBN10 []string `json:"isbn_10"`
-			ISBN13 []string `json:"isbn_13"`
+			ISBN10      []string `json:"isbn_10"`
+			ISBN13      []string `json:"isbn_13"`
 			OpenLibrary []string `json:"openlibrary"`
 		} `json:"identifiers"`
 	}
@@ -164,8 +164,8 @@ func (c *Client) Search(ctx context.Context, query string, offset, limit int) ([
 	defer resp.Body.Close()
 
 	var result struct {
-		NumFound int  `json:"numFound"`
-		Start    int  `json:"start"`
+		NumFound int `json:"numFound"`
+		Start    int `json:"start"`
 		Docs     []struct {
 			Key           string   `json:"key"`
 			Title         string   `json:"title"`

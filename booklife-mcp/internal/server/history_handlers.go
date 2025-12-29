@@ -42,6 +42,13 @@ type GetHistoryStatsInput struct {
 	// No input needed
 }
 
+// ExportForImportInput for the history_export_for_import tool
+type ExportForImportInput struct {
+	Activity string `json:"activity,omitempty"` // "Returned" (default), "Borrowed", "Reserved", "CheckedIn"
+	Format   string `json:"format,omitempty"`   // "audiobook", "ebook", "book", "magazine"
+	Limit    int    `json:"limit,omitempty"`    // Maximum number of books to export
+}
+
 // ===== History Tool Handlers =====
 
 func (s *Server) handleImportTimeline(ctx context.Context, req *mcp.CallToolRequest, input ImportTimelineInput) (*mcp.CallToolResult, any, error) {
@@ -303,4 +310,73 @@ func (s *Server) handleGetHistoryStats(ctx context.Context, req *mcp.CallToolReq
 			},
 		},
 	}, stats, nil
+}
+
+func (s *Server) handleExportForImport(ctx context.Context, req *mcp.CallToolRequest, input ExportForImportInput) (*mcp.CallToolResult, any, error) {
+	if s.historyStore == nil {
+		return nil, nil, fmt.Errorf("history store is not available")
+	}
+
+	// Set defaults
+	activity := input.Activity
+	if activity == "" {
+		activity = "Returned"
+	}
+
+	// Build query with filters
+	query := fmt.Sprintf("activity:%s", activity)
+	if input.Format != "" {
+		query += fmt.Sprintf(" format:%s", input.Format)
+	}
+
+	// Fetch entries
+	offset := 0
+	limit := input.Limit
+	if limit <= 0 {
+		limit = 10000 // Large default to get all books
+	}
+
+	entries, _, err := s.historyStore.SearchHistory(query, offset, limit)
+	if err != nil {
+		return nil, nil, fmt.Errorf("searching history: %w", err)
+	}
+
+	if len(entries) == 0 {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{
+					Text: "No entries found matching the filters",
+				},
+			},
+		}, map[string]any{"exported_count": 0, "file_path": ""}, nil
+	}
+
+	// Generate CSV file
+	importer := history.NewImporter(s.historyStore)
+	filePath, count, err := importer.ExportForImport(entries, activity)
+	if err != nil {
+		return nil, nil, fmt.Errorf("exporting to CSV: %w", err)
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("✅ Exported %d books to CSV file\n\n", count))
+	sb.WriteString(fmt.Sprintf("📁 File: %s\n\n", filePath))
+	sb.WriteString("Import to Hardcover:\n")
+	sb.WriteString("1. Go to https://hardcover.app\n")
+	sb.WriteString("2. Settings → Import Books\n")
+	sb.WriteString("3. Choose 'Goodreads' format\n")
+	sb.WriteString("4. Upload the CSV file\n")
+
+	return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{
+					Text: sb.String(),
+				},
+			},
+		}, map[string]any{
+			"exported_count": count,
+			"file_path":      filePath,
+			"activity":       activity,
+			"format":         input.Format,
+		}, nil
 }
