@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/user/booklife-mcp/internal/debug"
 	"github.com/user/booklife-mcp/internal/dirs"
 	"github.com/user/booklife-mcp/internal/models"
 )
@@ -111,24 +112,101 @@ func (c *Client) doRequest(method, endpoint string, body io.Reader) ([]byte, err
 	// Execute request
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, enhanceNetworkError(err, endpoint)
 	}
 	defer resp.Body.Close()
 
 	// Read response
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("reading response body: %w", err)
 	}
 
-	// Log response
-	os.WriteFile("/tmp/libby-debug.log", respBody, 0644)
+	// Debug logging only if BOOKLIFE_DEBUG=true
+	debug.Log("libby", respBody)
 
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("API returned HTTP %d: %s", resp.StatusCode, string(respBody[:min(len(respBody), 200)]))
+		preview := string(respBody)
+		if len(preview) > 200 {
+			preview = preview[:200]
+		}
+
+		baseErr := fmt.Sprintf("Libby API error (HTTP %d): %s", resp.StatusCode, preview)
+
+		switch resp.StatusCode {
+		case 401:
+			return nil, fmt.Errorf("%s\n\n"+
+				"Authentication failed. Your Libby identity may be invalid or expired.\n\n"+
+				"Fix:\n"+
+				"1. Reconnect to Libby: booklife libby-connect <code>\n"+
+				"2. Get a new clone code from the Libby app", baseErr)
+		case 429:
+			return nil, fmt.Errorf("%s\n\n"+
+				"Rate limit exceeded.\n\n"+
+				"Fix: Wait a few minutes before retrying", baseErr)
+		case 500, 502, 503, 504:
+			return nil, fmt.Errorf("%s\n\n"+
+				"OverDrive/Libby API is experiencing issues.\n\n"+
+				"Fix: Retry in a few minutes", baseErr)
+		default:
+			return nil, fmt.Errorf("%s", baseErr)
+		}
 	}
 
 	return respBody, nil
+}
+
+// enhanceNetworkError adds helpful context to network errors
+func enhanceNetworkError(err error, endpoint string) error {
+	if err == nil {
+		return nil
+	}
+
+	urlErr, ok := err.(*url.Error)
+	if !ok {
+		return err
+	}
+
+	// Timeout errors
+	if urlErr.Timeout() {
+		return fmt.Errorf("request timed out to %s: %w\n\n"+
+			"Network connectivity issue.\n\n"+
+			"Fix:\n"+
+			"1. Check your internet connection\n"+
+			"2. Try again in a moment\n"+
+			"3. Check if OverDrive services are accessible", endpoint, err)
+	}
+
+	// DNS lookup failures
+	if strings.Contains(urlErr.Error(), "no such host") {
+		return fmt.Errorf("DNS lookup failed for %s: %w\n\n"+
+			"Cannot resolve hostname.\n\n"+
+			"Fix:\n"+
+			"1. Check your internet connection\n"+
+			"2. Verify DNS settings\n"+
+			"3. Try: ping sentry-read.svc.overdrive.com", endpoint, err)
+	}
+
+	// TLS/certificate errors
+	if strings.Contains(urlErr.Error(), "certificate") || strings.Contains(urlErr.Error(), "x509") {
+		return fmt.Errorf("TLS certificate error for %s: %w\n\n"+
+			"OverDrive's certificate may be misconfigured.\n\n"+
+			"Fix:\n"+
+			"1. Enable skip-tls-verify in config (insecure, temporary only):\n"+
+			"   libby { skip-tls-verify true }\n"+
+			"2. Or use: booklife libby-connect <code> --skip-tls-verify", endpoint, err)
+	}
+
+	// Connection refused
+	if strings.Contains(urlErr.Error(), "connection refused") {
+		return fmt.Errorf("connection refused to %s: %w\n\n"+
+			"Cannot connect to OverDrive services.\n\n"+
+			"Fix:\n"+
+			"1. Check your internet connection\n"+
+			"2. Check if OverDrive is down: https://status.overdrive.com", endpoint, err)
+	}
+
+	return err
 }
 
 // Browser-like user agent (matches libby-calibre-plugin)
@@ -345,7 +423,7 @@ func (c *Client) CheckAvailability(ctx context.Context, isbn, title, author stri
 
 // GetLoans returns current loans
 func (c *Client) GetLoans(ctx context.Context) ([]models.LibbyLoan, error) {
-	endpoint := fmt.Sprintf("%s/chip", sentryReadURL)
+	endpoint := fmt.Sprintf("%s/chip/sync", sentryReadURL)
 
 	respBody, err := c.doRequest("GET", endpoint, nil)
 	if err != nil {
@@ -418,36 +496,33 @@ func (c *Client) GetHistory(ctx context.Context, offset, limit int) ([]models.Li
 }
 
 // GetTags returns user's book tags
-// Note: Libby's API may not expose tags through the web API.
-// This attempts to fetch from /chip/sync which includes tag data if available.
 func (c *Client) GetTags(ctx context.Context) (map[string][]string, error) {
-	// Tags are embedded in the sync response, not a separate endpoint
-	endpoint := fmt.Sprintf("%s/chip/sync", sentryReadURL)
+	// Use vandal API for tags
+	endpoint := fmt.Sprintf("%s/tags", vandalURL)
 
 	respBody, err := c.doRequest("GET", endpoint, nil)
 	if err != nil {
-		// Return empty map on error - tags may not be supported
-		return make(map[string][]string), nil
+		return nil, fmt.Errorf("fetching tags: %w", err)
 	}
 
 	// Parse response to check for tags field
 	var result struct {
 		Tags []struct {
+			ID       string   `json:"id"`
 			Name     string   `json:"name"`
-			MediaIDs []string `json:"titleIds"`
+			TitleIDs []string `json:"titleIds"`
 		} `json:"tags"`
 	}
 
 	if err := json.Unmarshal(respBody, &result); err != nil {
-		// If tags field doesn't exist or is empty, return empty map
-		return make(map[string][]string), nil
+		return nil, fmt.Errorf("decoding tags: %w", err)
 	}
 
 	// Convert to map format
 	tags := make(map[string][]string)
 	for _, tag := range result.Tags {
 		if tag.Name != "" {
-			tags[tag.Name] = tag.MediaIDs
+			tags[tag.Name] = tag.TitleIDs
 		}
 	}
 
@@ -455,24 +530,110 @@ func (c *Client) GetTags(ctx context.Context) (map[string][]string, error) {
 }
 
 // AddTag adds a tag to a media item
-// Note: Tag modification may not be supported in the Libby web API.
 func (c *Client) AddTag(ctx context.Context, mediaID, tag string) error {
-	// The Libby web API doesn't expose tag modification endpoints.
-	// Tags are managed within the mobile app only.
-	return fmt.Errorf("tag modification not supported via Libby web API")
+	// First, get or create the tag to find its ID
+	tagID, err := c.getOrCreateTag(ctx, tag)
+	if err != nil {
+		return fmt.Errorf("getting/creating tag: %w", err)
+	}
+
+	// URL-encode the tag name
+	encodedTag := url.PathEscape(tag)
+
+	// POST to /tag/{tag_id}/{encoded_tag_name}/tagging/{title_id}
+	endpoint := fmt.Sprintf("%s/tag/%s/%s/tagging/%s", vandalURL, tagID, encodedTag, mediaID)
+
+	_, err = c.doRequest("POST", endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("adding tag: %w", err)
+	}
+
+	return nil
 }
 
 // RemoveTag removes a tag from a media item
-// Note: Tag modification may not be supported in the Libby web API.
 func (c *Client) RemoveTag(ctx context.Context, mediaID, tag string) error {
-	// The Libby web API doesn't expose tag modification endpoints.
-	// Tags are managed within the mobile app only.
-	return fmt.Errorf("tag modification not supported via Libby web API")
+	// First, get the tag ID
+	tagID, err := c.getTagID(ctx, tag)
+	if err != nil {
+		return fmt.Errorf("finding tag: %w", err)
+	}
+
+	// URL-encode the tag name
+	encodedTag := url.PathEscape(tag)
+
+	// DELETE /tag/{tag_id}/{encoded_tag_name}/tagging/{title_id}
+	endpoint := fmt.Sprintf("%s/tag/%s/%s/tagging/%s", vandalURL, tagID, encodedTag, mediaID)
+
+	_, err = c.doRequest("DELETE", endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("removing tag: %w", err)
+	}
+
+	return nil
+}
+
+// getTagID finds the ID of an existing tag by name
+func (c *Client) getTagID(ctx context.Context, tagName string) (string, error) {
+	// Fetch tags directly to get IDs
+	endpoint := fmt.Sprintf("%s/tags", vandalURL)
+	respBody, err := c.doRequest("GET", endpoint, nil)
+	if err != nil {
+		return "", err
+	}
+
+	var result struct {
+		Tags []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"tags"`
+	}
+
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return "", err
+	}
+
+	for _, tag := range result.Tags {
+		if tag.Name == tagName {
+			return tag.ID, nil
+		}
+	}
+
+	return "", fmt.Errorf("tag '%s' not found", tagName)
+}
+
+// getOrCreateTag gets an existing tag ID or creates a new tag
+func (c *Client) getOrCreateTag(ctx context.Context, tagName string) (string, error) {
+	// Try to find existing tag
+	tagID, err := c.getTagID(ctx, tagName)
+	if err == nil {
+		return tagID, nil
+	}
+
+	// Tag doesn't exist, create it
+	// POST to /tag/{tag_id}/{encoded_tag_name}
+	// For new tags, use a temporary ID (the API will assign a real one)
+	encodedTag := url.PathEscape(tagName)
+	endpoint := fmt.Sprintf("%s/tag/0/%s", vandalURL, encodedTag)
+
+	respBody, err := c.doRequest("POST", endpoint, nil)
+	if err != nil {
+		return "", fmt.Errorf("creating tag: %w", err)
+	}
+
+	var result struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return "", fmt.Errorf("decoding tag creation response: %w", err)
+	}
+
+	return result.ID, nil
 }
 
 // GetHolds returns current holds
 func (c *Client) GetHolds(ctx context.Context) ([]models.LibbyHold, error) {
-	endpoint := fmt.Sprintf("%s/chip", sentryReadURL)
+	endpoint := fmt.Sprintf("%s/chip/sync", sentryReadURL)
 
 	respBody, err := c.doRequest("GET", endpoint, nil)
 	if err != nil {
@@ -540,12 +701,14 @@ func (c *Client) PlaceHold(ctx context.Context, mediaID, format string, autoBorr
 
 	lib := c.libraries[0]
 
-	endpoint := fmt.Sprintf("%s/chip/holds", sentryReadURL)
+	// Correct endpoint format from libby-calibre-plugin:
+	// POST /card/{card_id}/hold/{title_id}
+	endpoint := fmt.Sprintf("%s/card/%s/hold/%s", sentryReadURL, lib.CardID, mediaID)
 
+	// Payload format from libby-calibre-plugin
 	payload := map[string]interface{}{
-		"mediaId":    mediaID,
-		"cardId":     lib.CardID,
-		"autoBorrow": autoBorrow,
+		"days_to_suspend": 0,
+		"email_address":   "",
 	}
 
 	body, err := json.Marshal(payload)
@@ -568,12 +731,106 @@ func (c *Client) PlaceHold(ctx context.Context, mediaID, format string, autoBorr
 	return result.ID, nil
 }
 
+// CancelHold cancels a hold on a media item
+func (c *Client) CancelHold(ctx context.Context, holdID string) error {
+	if len(c.libraries) == 0 {
+		return fmt.Errorf("no libraries linked")
+	}
+
+	lib := c.libraries[0]
+
+	// DELETE /card/{card_id}/hold/{hold_id}
+	endpoint := fmt.Sprintf("%s/card/%s/hold/%s", sentryReadURL, lib.CardID, holdID)
+
+	_, err := c.doRequest("DELETE", endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("cancelling hold: %w", err)
+	}
+
+	return nil
+}
+
+// BorrowTitle borrows an available title
+func (c *Client) BorrowTitle(ctx context.Context, titleID string) (string, error) {
+	if len(c.libraries) == 0 {
+		return "", fmt.Errorf("no libraries linked")
+	}
+
+	lib := c.libraries[0]
+
+	// POST /card/{card_id}/loan/{title_id}
+	endpoint := fmt.Sprintf("%s/card/%s/loan/%s", sentryReadURL, lib.CardID, titleID)
+
+	payload := map[string]interface{}{
+		"days":          21, // Default lending period
+		"email_address": "",
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+
+	respBody, err := c.doRequest("POST", endpoint, bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("borrowing title: %w", err)
+	}
+
+	var result struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return "", fmt.Errorf("decoding borrow response: %w", err)
+	}
+
+	return result.ID, nil
+}
+
+// ReturnTitle returns a borrowed title early
+func (c *Client) ReturnTitle(ctx context.Context, loanID string) error {
+	if len(c.libraries) == 0 {
+		return fmt.Errorf("no libraries linked")
+	}
+
+	lib := c.libraries[0]
+
+	// DELETE /card/{card_id}/loan/{loan_id}
+	endpoint := fmt.Sprintf("%s/card/%s/loan/%s", sentryReadURL, lib.CardID, loanID)
+
+	_, err := c.doRequest("DELETE", endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("returning title: %w", err)
+	}
+
+	return nil
+}
+
+// RenewTitle renews a borrowed title
+func (c *Client) RenewTitle(ctx context.Context, loanID string) error {
+	if len(c.libraries) == 0 {
+		return fmt.Errorf("no libraries linked")
+	}
+
+	lib := c.libraries[0]
+
+	// PUT /card/{card_id}/loan/{loan_id}
+	endpoint := fmt.Sprintf("%s/card/%s/loan/%s", sentryReadURL, lib.CardID, loanID)
+
+	_, err := c.doRequest("PUT", endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("renewing title: %w", err)
+	}
+
+	return nil
+}
+
 // Identity persistence functions
 
 const identityFile = "libby-identity.json"
 
-// identityPath returns the full path to the identity file in the platform-specific config directory.
-func identityPath() (string, error) {
+// IdentityPath returns the full path to the identity file in the platform-specific config directory.
+// Exported for use in error messages.
+func IdentityPath() (string, error) {
 	configDir, err := dirs.ConfigDir()
 	if err != nil {
 		return "", fmt.Errorf("getting config directory: %w", err)
@@ -730,7 +987,7 @@ func ConnectWithOptions(code string, skipTLSVerify bool) (*Identity, []Library, 
 
 // SaveIdentity saves the Libby identity to disk for future use
 func SaveIdentity(identity *Identity) error {
-	path, err := identityPath()
+	path, err := IdentityPath()
 	if err != nil {
 		return err
 	}
@@ -755,7 +1012,7 @@ func SaveIdentity(identity *Identity) error {
 
 // LoadIdentity loads a previously saved Libby identity from disk
 func LoadIdentity() (*Identity, error) {
-	path, err := identityPath()
+	path, err := IdentityPath()
 	if err != nil {
 		return nil, err
 	}
@@ -803,7 +1060,7 @@ func NewClientFromSavedIdentityWithOptions(skipTLSVerify bool) (*Client, error) 
 
 // HasSavedIdentity checks if a saved identity exists
 func HasSavedIdentity() bool {
-	path, err := identityPath()
+	path, err := IdentityPath()
 	if err != nil {
 		return false
 	}
