@@ -1,0 +1,30 @@
+# Compiled binaries
+booklife-mcp/booklife
+booklife-mcp/build/
+build/
+
+# Backup files
+*.bak
+
+# Development artifacts
+BEFORE_AFTER_EXAMPLES.md
+IMPLEMENTATION_SUMMARY.md
+mcp-analysis-booklife.md
+
+# Claude Code session data
+.claude/
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment / secrets
+.env
+.env.*

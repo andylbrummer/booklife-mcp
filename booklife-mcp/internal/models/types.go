@@ -110,6 +110,10 @@ type LibraryAvailability struct {
 	AudiobookCopies       int  `json:"audiobook_copies"`
 	AudiobookWaitlistSize int  `json:"audiobook_waitlist_size"`
 
+	// Per-format identifiers (for cross-format ISBN lookup)
+	EbookID     string `json:"ebook_id,omitempty"`     // Overdrive format ID for ebook
+	AudiobookID string `json:"audiobook_id,omitempty"` // Overdrive format ID for audiobook
+
 	EstimatedWaitDays int `json:"estimated_wait_days,omitempty"`
 }
 

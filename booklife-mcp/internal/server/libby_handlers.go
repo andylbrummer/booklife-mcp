@@ -25,37 +25,11 @@ type SearchLibraryInput struct {
 	PaginationParams `json:",inline"`
 }
 
-// CheckAvailabilityInput for the check_availability tool
-type CheckAvailabilityInput struct {
-	ISBN   string `json:"isbn,omitempty"`
-	Title  string `json:"title,omitempty"`
-	Author string `json:"author,omitempty"`
-}
-
 // PlaceHoldInput for the place_hold tool
 type PlaceHoldInput struct {
 	MediaID    string `json:"media_id"`
 	Format     string `json:"format"`
 	AutoBorrow bool   `json:"auto_borrow,omitempty"`
-}
-
-// AddTagInput for the add_tag tool
-type AddTagInput struct {
-	MediaID string `json:"media_id"`
-	Tag     string `json:"tag"`
-}
-
-// RemoveTagInput for the remove_tag tool
-type RemoveTagInput struct {
-	MediaID string `json:"media_id"`
-	Tag     string `json:"tag"`
-}
-
-// GetTagsInput for the get_tags tool
-type GetTagsInput struct {
-	Tag string `json:"tag,omitempty"` // Optional filter by tag name
-	// Pagination
-	PaginationParams `json:",inline"`
 }
 
 // ===== Libby Tool Handlers =====
@@ -141,48 +115,36 @@ func (s *Server) handleSearchLibrary(ctx context.Context, req *mcp.CallToolReque
 		sb.WriteString(formatPagingFooter(pagedResult, len(results)))
 	}
 
+	// Determine next actions based on results
+	var nextActions []string
+	if len(results) > 0 {
+		// Check if any books are available now
+		hasAvailable := false
+		for _, book := range results {
+			if book.LibraryAvailability != nil && (book.LibraryAvailability.EbookAvailable || book.LibraryAvailability.AudiobookAvailable) {
+				hasAvailable = true
+				break
+			}
+		}
+
+		if hasAvailable {
+			nextActions = append(nextActions, "place_hold")
+		}
+		nextActions = append(nextActions, "check_availability", "add_to_tbr")
+	}
+
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
 			&mcp.TextContent{
 				Text: sb.String(),
 			},
 		},
-	}, map[string]any{"results": results, "count": len(results), "pagination": pagedResult}, nil
-}
-
-func (s *Server) handleCheckAvailability(ctx context.Context, req *mcp.CallToolRequest, input CheckAvailabilityInput) (*mcp.CallToolResult, any, error) {
-	if s.libby == nil {
-		return nil, nil, fmt.Errorf("Libby is not configured")
-	}
-
-	avail, err := s.libby.CheckAvailability(ctx, input.ISBN, input.Title, input.Author)
-	if err != nil {
-		return nil, nil, fmt.Errorf("checking availability: %w", err)
-	}
-
-	if avail == nil {
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				&mcp.TextContent{Text: "❌ Book not found in library catalog\n"},
-			},
-		}, map[string]any{"found": false}, nil
-	}
-
-	// Build detailed availability output with media_id
-	var sb strings.Builder
-	bookRef := input.ISBN
-	if bookRef == "" {
-		bookRef = fmt.Sprintf("\"%s\" by %s", input.Title, input.Author)
-	}
-
-	sb.WriteString(fmt.Sprintf("Library availability for %s:\n", bookRef))
-	sb.WriteString(formatLibraryAvailabilityForDisplay(avail, ""))
-
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			&mcp.TextContent{Text: sb.String()},
-		},
-	}, map[string]any{"found": true, "availability": avail}, nil
+	}, map[string]any{
+		"results":    results,
+		"count":      len(results),
+		"pagination": pagedResult,
+		"_meta":      createSearchMeta(len(results), pagedResult.HasNext, nextActions),
+	}, nil
 }
 
 func (s *Server) handleGetLoans(ctx context.Context, req *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, any, error) {
@@ -317,106 +279,10 @@ func (s *Server) handlePlaceHold(ctx context.Context, req *mcp.CallToolRequest, 
 				Text: sb.String(),
 			},
 		},
-	}, map[string]any{"hold_id": holdID, "media_id": input.MediaID, "format": input.Format}, nil
-}
-
-// ===== Tag Handlers =====
-
-func (s *Server) handleGetTags(ctx context.Context, req *mcp.CallToolRequest, input GetTagsInput) (*mcp.CallToolResult, any, error) {
-	if s.libby == nil {
-		return nil, nil, fmt.Errorf("Libby is not configured")
-	}
-
-	tags, err := s.libby.GetTags(ctx)
-	if err != nil {
-		return nil, nil, fmt.Errorf("getting tags: %w", err)
-	}
-
-	// Filter by specific tag if requested
-	if input.Tag != "" {
-		if mediaIDs, ok := tags[input.Tag]; ok {
-			tags = map[string][]string{input.Tag: mediaIDs}
-		} else {
-			tags = map[string][]string{}
-		}
-	}
-
-	// Build detailed text output
-	var sb strings.Builder
-	if len(tags) == 0 {
-		if input.Tag != "" {
-			sb.WriteString(fmt.Sprintf("No books found with tag \"%s\"\n", input.Tag))
-		} else {
-			sb.WriteString("No tags found - use libby_add_tag to organize your books\n")
-		}
-	} else {
-		sb.WriteString(fmt.Sprintf("Found %d tag(s):\n\n", len(tags)))
-		for tag, mediaIDs := range tags {
-			sb.WriteString(fmt.Sprintf("🏷️  %s (%d books)\n", tag, len(mediaIDs)))
-			for i, mediaID := range mediaIDs {
-				sb.WriteString(fmt.Sprintf("   [%d] media_id: %s\n", i+1, mediaID))
-			}
-			sb.WriteString("\n")
-		}
-	}
-
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			&mcp.TextContent{
-				Text: sb.String(),
-			},
-		},
-	}, map[string]any{"tags": tags, "count": len(tags)}, nil
-}
-
-func (s *Server) handleAddTag(ctx context.Context, req *mcp.CallToolRequest, input AddTagInput) (*mcp.CallToolResult, any, error) {
-	if s.libby == nil {
-		return nil, nil, fmt.Errorf("Libby is not configured")
-	}
-
-	if input.MediaID == "" {
-		return nil, nil, fmt.Errorf("media_id is required")
-	}
-	if input.Tag == "" {
-		return nil, nil, fmt.Errorf("tag is required")
-	}
-
-	err := s.libby.AddTag(ctx, input.MediaID, input.Tag)
-	if err != nil {
-		return nil, nil, fmt.Errorf("adding tag: %w", err)
-	}
-
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			&mcp.TextContent{
-				Text: fmt.Sprintf("✅ Added tag \"%s\" to media_id: %s\n", input.Tag, input.MediaID),
-			},
-		},
-	}, map[string]any{"media_id": input.MediaID, "tag": input.Tag, "action": "added"}, nil
-}
-
-func (s *Server) handleRemoveTag(ctx context.Context, req *mcp.CallToolRequest, input RemoveTagInput) (*mcp.CallToolResult, any, error) {
-	if s.libby == nil {
-		return nil, nil, fmt.Errorf("Libby is not configured")
-	}
-
-	if input.MediaID == "" {
-		return nil, nil, fmt.Errorf("media_id is required")
-	}
-	if input.Tag == "" {
-		return nil, nil, fmt.Errorf("tag is required")
-	}
-
-	err := s.libby.RemoveTag(ctx, input.MediaID, input.Tag)
-	if err != nil {
-		return nil, nil, fmt.Errorf("removing tag: %w", err)
-	}
-
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			&mcp.TextContent{
-				Text: fmt.Sprintf("✅ Removed tag \"%s\" from media_id: %s\n", input.Tag, input.MediaID),
-			},
-		},
-	}, map[string]any{"media_id": input.MediaID, "tag": input.Tag, "action": "removed"}, nil
+	}, map[string]any{
+		"hold_id":  holdID,
+		"media_id": input.MediaID,
+		"format":   input.Format,
+		"_meta":    createOperationMeta(true, true, false, []string{"get_holds", "get_loans"}),
+	}, nil
 }

@@ -44,18 +44,20 @@ func (s *Server) handleInfoOverview() (*mcp.CallToolResult, any, error) {
 	sb.WriteString("BookLife MCP - Your Personal Reading Assistant\n\n")
 
 	sb.WriteString("Categories:\n")
-	sb.WriteString("  hardcover (4 tools)    - Reading tracker and library management\n")
-	sb.WriteString("  libby (9 tools)        - Library access via OverDrive\n")
-	sb.WriteString("  booklife (3 tools)     - Unified cross-provider actions\n")
-	sb.WriteString("  history (6 tools)      - Reading history and exports\n")
-	sb.WriteString("  enrichment (3 tools)   - Content analysis and recommendations\n")
-	sb.WriteString("  sync (1 tool)          - Sync reading history between services\n")
+	sb.WriteString("  hardcover (3 tools)    - Reading tracker and library management\n")
+	sb.WriteString("  libby (6 tools)        - Library access via OverDrive\n")
+	sb.WriteString("  tbr (6 tools)          - Unified to-be-read list management\n")
+	sb.WriteString("  booklife (2 tools)     - Unified cross-provider actions\n")
+	sb.WriteString("  history (4 tools)      - Reading history and statistics\n")
+	sb.WriteString("  enrichment (2 tools)   - Metadata enrichment\n")
+	sb.WriteString("  sync (1 tool)          - Universal sync operations\n")
 	sb.WriteString("  profile (1 tool)       - Reading profile and preferences\n")
-	sb.WriteString("  recommendation (2 tools) - Content-based book recommendations\n\n")
+	sb.WriteString("  recommendation (1 tool) - Content-based book recommendations\n\n")
 
 	sb.WriteString("Common Workflows:\n")
 	sb.WriteString("  → Use workflow=\"find_and_read\" for discovery flow\n")
 	sb.WriteString("  → Use workflow=\"sync_history\" for history management\n")
+	sb.WriteString("  → Use workflow=\"tbr_management\" for managing your reading list\n")
 	sb.WriteString("  → Use workflow=\"recommendations\" for personalized picks\n\n")
 
 	sb.WriteString("Quick Start:\n")
@@ -72,9 +74,9 @@ func (s *Server) handleInfoOverview() (*mcp.CallToolResult, any, error) {
 				&mcp.TextContent{Text: sb.String()},
 			},
 		}, map[string]any{
-			"categories": []string{"hardcover", "libby", "booklife", "history", "enrichment", "sync", "profile", "recommendation"},
-			"workflows":  []string{"find_and_read", "sync_history", "recommendations"},
-			"tool_count": 29,
+			"categories": []string{"hardcover", "libby", "tbr", "booklife", "history", "enrichment", "sync", "profile", "recommendation"},
+			"workflows":  []string{"find_and_read", "sync_history", "tbr_management", "recommendations"},
+			"tool_count": 27,
 			"_meta": map[string]any{
 				"has_results":         true,
 				"action_needed":       false,
@@ -87,54 +89,54 @@ func (s *Server) handleInfoOverview() (*mcp.CallToolResult, any, error) {
 func (s *Server) handleInfoCategory(category string) (*mcp.CallToolResult, any, error) {
 	categories := map[string][]string{
 		"hardcover": {
-			"hardcover_search_books - Search Hardcover catalog",
 			"hardcover_get_my_library - Get your reading list",
 			"hardcover_update_reading_status - Update status/progress/rating",
 			"hardcover_add_to_library - Add book to library",
 		},
 		"libby": {
-			"libby_search - Search library catalog",
-			"libby_check_availability - Check library availability",
+			"libby_search - Search library catalog (includes availability)",
 			"libby_get_loans - Get current loans",
 			"libby_get_holds - Get hold queue",
 			"libby_place_hold - Place library hold",
-			"libby_get_tags - Get book tags",
-			"libby_add_tag - Add tag to book",
-			"libby_remove_tag - Remove tag from book",
+			"libby_sync_tag_metadata - Sync tag metadata to cache",
+			"libby_tag_metadata_list - List cached tag metadata",
+		},
+		"tbr": {
+			"tbr_list - List unified TBR from all sources",
+			"tbr_search - Search TBR books",
+			"tbr_add - Add book to TBR",
+			"tbr_remove - Remove book from TBR",
+			"tbr_sync - Sync TBR from Hardcover/Libby",
+			"tbr_stats - Get TBR statistics",
 		},
 		"booklife": {
 			"booklife_find_book_everywhere - Search all sources for a book",
 			"booklife_best_way_to_read - Determine best way to access a book",
-			"booklife_add_to_tbr - Add book to TBR list",
 		},
 		"history": {
 			"history_import_timeline - Import Libby reading history",
 			"history_sync_current_loans - Sync current loans to local store",
-			"history_get - Get reading history with pagination",
-			"history_search - Search reading history",
+			"history_get - Get reading history with pagination and search",
 			"history_stats - Get reading statistics",
-			"history_export_for_import - Export as Goodreads-compatible CSV",
 		},
 		"enrichment": {
 			"enrichment_enrich_history - Enrich history with metadata (background job)",
 			"enrichment_status - Query enrichment job progress",
-			"enrichment_cancel - Cancel running enrichment job",
 		},
 		"sync": {
-			"sync - Sync reading history between services (progressive disclosure)",
+			"sync - Universal sync for history, enrichment, and tag metadata",
 		},
 		"profile": {
 			"profile_get - Get your reading profile and preferences",
 		},
 		"recommendation": {
-			"book_get_with_analysis - Get book with enriched analysis",
 			"book_find_similar - Find similar books based on content",
 		},
 	}
 
 	tools, ok := categories[category]
 	if !ok {
-		validCategories := []string{"hardcover", "libby", "booklife", "history", "enrichment", "sync", "profile", "recommendation"}
+		validCategories := []string{"hardcover", "libby", "tbr", "booklife", "history", "enrichment", "sync", "profile", "recommendation"}
 		return nil, nil, fmt.Errorf("unknown category: %s (valid: %s)", category, strings.Join(validCategories, ", "))
 	}
 
@@ -320,6 +322,52 @@ Tips:
   - Check "unmatched" to see books that need manual review
   - Sync runs incrementally - only new returns
 `,
+		"tbr_management": `
+Workflow: Managing Your Unified TBR List
+
+1. Initial setup - sync from all sources:
+   tbr_sync action="sync_all"
+
+   This pulls in:
+   - Hardcover "want-to-read" list
+   - Libby holds and tagged books
+   - Keeps them in sync locally
+
+2. View your TBR overview:
+   tbr_stats
+
+   Shows:
+   - Total books by source
+   - Available at library count
+   - Priority breakdown
+   - Format distribution
+
+3. Browse your TBR:
+   tbr_list source="all" page_size=20
+
+   Filter options:
+   - source: physical, hardcover, libby, all
+   - tag: filter by Libby tags
+   - available: true (library books ready now)
+
+4. Search within TBR:
+   tbr_search query="science fiction" source="all"
+
+5. Add books manually:
+   tbr_add title="Project Hail Mary" author="Andy Weir" source="physical" priority=1
+
+   Or add with auto-hold at library:
+   booklife_add_to_tbr isbn="9780593135204" place_hold=true
+
+6. Remove finished books:
+   tbr_remove tbr_id=123
+
+Tips:
+  - Use tbr_sync regularly to keep Hardcover/Libby in sync
+  - Filter by available=true to see what you can borrow now
+  - Libby tags automatically sync full book metadata
+  - Priority levels: 0=normal, 1=high, 2=urgent
+`,
 		"recommendations": `
 Workflow: Getting Personalized Recommendations
 
@@ -364,7 +412,7 @@ Tips:
 
 	guide, ok := workflows[workflow]
 	if !ok {
-		validWorkflows := []string{"find_and_read", "sync_history", "recommendations"}
+		validWorkflows := []string{"find_and_read", "sync_history", "tbr_management", "recommendations"}
 		return nil, nil, fmt.Errorf("unknown workflow: %s (valid: %s)", workflow, strings.Join(validWorkflows, ", "))
 	}
 

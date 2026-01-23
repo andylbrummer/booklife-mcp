@@ -32,16 +32,7 @@ providers {
     }
     
     libby enabled=true {
-        clone-code env="LIBBY_CLONE_CODE"
-        
-        libraries {
-            card "austin-public-library" {
-                id "apl"
-                website "https://austin.overdrive.com"
-                priority 1
-            }
-        }
-        
+        // Libraries synced automatically via 'booklife libby-connect'
         notifications {
             hold-available true
             due-soon-days 3
@@ -58,50 +49,11 @@ providers {
         sparql-endpoint "https://query.wikidata.org/sparql"
     }
     
-    youtube enabled=false {
-        api-key env="YOUTUBE_API_KEY"
-        booktube-channels {
-            // Add your favorite BookTubers here
-        }
-    }
+    youtube enabled=false
+
+    tiktok enabled=false
     
-    tiktok enabled=false {
-        scraper-api env="TIKTOK_SCRAPER_API_KEY"
-        hashtags "#BookTok" "#BookRecommendations"
-    }
-    
-    local-bookstores enabled=true {
-        
-        store "bookpeople" {
-            name "BookPeople"
-            website "https://bookpeople.com"
-            location "603 N. Lamar, Austin, TX"
-            phone "512-472-5050"
-            events-url "https://bookpeople.com/events"
-            search-enabled true
-        }
-        
-        store "bookwoman" {
-            name "BookWoman"
-            website "https://bookwoman.com"
-            location "5501 N Lamar Blvd, Austin, TX"
-            specialties "feminist" "lgbtq" "local-authors"
-        }
-        
-        store "black-pearl" {
-            name "Black Pearl Books"
-            website "https://blackpearlbookstore.com"
-            location "Austin, TX"
-            specialties "bipoc" "diverse-voices"
-        }
-        
-        store "first-light" {
-            name "First Light Books"
-            website "https://firstlightbooks.com"
-            location "Austin, TX"
-            specialties "curated" "coffee" "wine"
-        }
-    }
+    local-bookstores enabled=false
 }
 
 cache {

@@ -6,24 +6,9 @@ import (
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/user/booklife-mcp/internal/models"
 )
 
 // ===== Hardcover Input Types =====
-
-// SearchBooksInput for the search_books tool
-type SearchBooksInput struct {
-	Query   string   `json:"query"`
-	Sources []string `json:"sources,omitempty"`
-	// Pagination
-	PaginationParams `json:",inline"`
-	// Filtering
-	Format    []string `json:"format,omitempty"`     // Filter by format: ebook, audiobook, physical
-	MinRating float64  `json:"min_rating,omitempty"` // Minimum community rating
-	Genre     string   `json:"genre,omitempty"`      // Filter by genre
-	// Sorting
-	SortBy string `json:"sort_by,omitempty"` // relevance, rating, date, title
-}
 
 // GetMyLibraryInput for the get_my_library tool
 type GetMyLibraryInput struct {
@@ -55,80 +40,6 @@ type AddToLibraryInput struct {
 }
 
 // ===== Hardcover Tool Handlers =====
-
-func (s *Server) handleSearchBooks(ctx context.Context, req *mcp.CallToolRequest, input SearchBooksInput) (*mcp.CallToolResult, any, error) {
-	if input.Query == "" {
-		return nil, nil, NewMissingQueryError()
-	}
-	if len(input.Query) > 500 {
-		return nil, nil, NewQueryTooLongError(len(input.Query), 500)
-	}
-
-	// Get pagination parameters
-	page, pageSize := getPagination(input.PaginationParams)
-	offset := input.PaginationParams.offset()
-
-	var results []models.Book
-	var totalCount int
-
-	// Search Hardcover first
-	if s.hardcover != nil {
-		books, total, err := s.hardcover.SearchBooks(ctx, input.Query, offset, pageSize)
-		if err == nil {
-			results = append(results, books...)
-			totalCount = total
-		}
-	}
-
-	// Enrich with Open Library data (only for current page to save API calls)
-	if s.openlibrary != nil {
-		for i := range results {
-			if results[i].ISBN13 != "" {
-				olData, err := s.openlibrary.GetByISBN(ctx, results[i].ISBN13)
-				if err == nil {
-					// Merge Open Library data
-					if results[i].Description == "" {
-						results[i].Description = olData.Description
-					}
-				}
-			}
-		}
-	}
-
-	// Calculate pagination metadata
-	pagedResult := calculatePagedResult(page, pageSize, totalCount)
-
-	// Build detailed text output with IDs for cross-tool usage
-	var sb strings.Builder
-	if len(results) == 0 {
-		sb.WriteString(fmt.Sprintf("No books found for \"%s\"\n", input.Query))
-	} else {
-		sb.WriteString(fmt.Sprintf("Found %d books for \"%s\":\n\n", totalCount, input.Query))
-		for i, book := range results {
-			sb.WriteString(formatBookForDisplay(book, i+1))
-		}
-		sb.WriteString(formatPagingFooter(pagedResult, len(results)))
-	}
-
-	// Determine suggested next actions based on results
-	var suggestedNext []string
-	if len(results) > 0 {
-		suggestedNext = append(suggestedNext, "libby_check_availability")
-		suggestedNext = append(suggestedNext, "hardcover_add_to_library")
-	}
-
-	return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				&mcp.TextContent{
-					Text: sb.String(),
-				},
-			},
-		}, map[string]any{
-			"books":      results,
-			"pagination": pagedResult,
-			"_meta":      createResponseMeta(len(results) > 0, false, suggestedNext, true, 0.95),
-		}, nil
-}
 
 func (s *Server) handleGetMyLibrary(ctx context.Context, req *mcp.CallToolRequest, input GetMyLibraryInput) (*mcp.CallToolResult, any, error) {
 	if s.hardcover == nil {
@@ -343,7 +254,10 @@ func (s *Server) handleAddToLibrary(ctx context.Context, req *mcp.CallToolReques
 							Text: fmt.Sprintf("✅ Added \"%s\" to your library (note: could not place library hold: %v)\n", input.Title, holdErr),
 						},
 					},
-				}, map[string]any{"book_id": bookID}, nil
+				}, map[string]any{
+					"book_id": bookID,
+					"_meta":   createOperationMeta(true, true, false, []string{"get_my_library", "update_reading_status"}),
+				}, nil
 			}
 		}
 	}
@@ -354,5 +268,8 @@ func (s *Server) handleAddToLibrary(ctx context.Context, req *mcp.CallToolReques
 				Text: fmt.Sprintf("✅ Added \"%s\" to your library\n", input.Title),
 			},
 		},
-	}, map[string]any{"book_id": bookID}, nil
+	}, map[string]any{
+		"book_id": bookID,
+		"_meta":   createOperationMeta(true, true, false, []string{"get_my_library", "update_reading_status"}),
+	}, nil
 }

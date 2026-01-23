@@ -32,10 +32,17 @@ type HistoryStore interface {
 	SaveBookIdentity(bi *BookIdentity) error
 }
 
+// LibbySearcher defines the interface for searching Libby catalog
+// Used to find alternate format ISBNs when audiobook ISBN doesn't match Hardcover
+type LibbySearcher interface {
+	Search(ctx context.Context, query string, formats []string, available bool, offset, limit int) ([]models.Book, int, error)
+}
+
 // HardcoverSync syncs reading history to Hardcover
 type HardcoverSync struct {
 	hardcover         HardcoverProvider
 	store             HistoryStore
+	libby             LibbySearcher // Optional: for cross-format ISBN lookup
 	dryRun            bool
 	rateLimiter       *rate.Limiter
 	readBooksCache    map[string]bool // Cache of book IDs already marked as read
@@ -77,6 +84,11 @@ func (s *HardcoverSync) SetDryRun(dryRun bool) {
 // SetLimit sets the maximum number of entries to sync (0 = all)
 func (s *HardcoverSync) SetLimit(limit int) {
 	s.limit = limit
+}
+
+// SetLibbySearcher sets the Libby searcher for cross-format ISBN lookup
+func (s *HardcoverSync) SetLibbySearcher(libby LibbySearcher) {
+	s.libby = libby
 }
 
 // SyncReturnedBooks syncs all returned books from history to Hardcover as "read"
@@ -474,6 +486,15 @@ func (s *HardcoverSync) findHardcoverBook(ctx context.Context, entry models.Time
 			// ISBN search returned no results - log but continue to title+author search below
 			log.Printf("[ISBN NOT FOUND] Book with ISBN %s not found via ISBN search, will try title+author: %s by %s", entry.ISBN, entry.Title, entry.Author)
 		}
+
+		// Priority 3.5: Try cross-format ISBN lookup via Libby
+		// If audiobook ISBN failed, search Libby for ebook format ID and try that
+		if s.libby != nil && entry.Format == "audiobook" {
+			if ebookID, ebookTitle := s.tryEbookISBNFromLibby(ctx, entry); ebookID != "" {
+				return ebookID, ebookTitle, nil
+			}
+		}
+
 		// Continue to title+author search below (not returning empty anymore)
 	}
 
@@ -735,4 +756,81 @@ func titleMainPartMatches(libbyTitle, hardcoverTitle string) bool {
 
 	// Check if they match
 	return libbyNorm == hardcoverNorm
+}
+
+// tryEbookISBNFromLibby searches Libby by title/author to find the ebook format ID
+// and tries to match it in Hardcover. This handles the case where audiobook ISBNs
+// don't exist in Hardcover but ebook ISBNs do.
+func (s *HardcoverSync) tryEbookISBNFromLibby(ctx context.Context, entry models.TimelineEntry) (string, string) {
+	if s.libby == nil {
+		return "", ""
+	}
+
+	// Search Libby by title and author
+	query := entry.Title
+	if entry.Author != "" {
+		query += " " + entry.Author
+	}
+
+	if err := s.waitForRateLimit(ctx); err != nil {
+		log.Printf("[LIBBY SEARCH] Rate limit error: %v", err)
+		return "", ""
+	}
+
+	libbyBooks, _, err := s.libby.Search(ctx, query, nil, false, 0, 5)
+	if err != nil {
+		log.Printf("[LIBBY SEARCH] Error searching Libby: %v", err)
+		return "", ""
+	}
+
+	// Find matching book in Libby results
+	for _, libbyBook := range libbyBooks {
+		// Verify title match to avoid false positives
+		if normalizeTitle(libbyBook.Title) != normalizeTitle(entry.Title) {
+			continue
+		}
+
+		// Check if this book has an ebook format with a different ID
+		if libbyBook.LibraryAvailability == nil {
+			continue
+		}
+
+		ebookID := libbyBook.LibraryAvailability.EbookID
+		if ebookID == "" || ebookID == entry.ISBN {
+			// No ebook ID or same as audiobook ISBN
+			continue
+		}
+
+		log.Printf("[CROSS-FORMAT] Found ebook ID %s for audiobook %s (%s)", ebookID, entry.ISBN, entry.Title)
+
+		// Try searching Hardcover with the ebook ID
+		if err := s.waitForRateLimit(ctx); err != nil {
+			log.Printf("[CROSS-FORMAT] Rate limit error: %v", err)
+			return "", ""
+		}
+
+		hcBooks, _, err := s.hardcover.SearchBooks(ctx, ebookID, 0, 10)
+		if err != nil {
+			log.Printf("[CROSS-FORMAT] Error searching Hardcover with ebook ID: %v", err)
+			continue
+		}
+
+		// Look for exact ISBN match or title+author match
+		for _, hcBook := range hcBooks {
+			if hcBook.ISBN10 == ebookID || hcBook.ISBN13 == ebookID {
+				log.Printf("[CROSS-FORMAT MATCH] Found Hardcover book via ebook ISBN: %s -> %s", ebookID, hcBook.HardcoverID)
+				s.saveBookIdentity(entry, hcBook.HardcoverID)
+				return hcBook.HardcoverID, hcBook.Title
+			}
+
+			// Also accept strict title+author match from ebook search
+			if normalizeTitle(hcBook.Title) == normalizeTitle(entry.Title) && authorsMatch(entry.Author, hcBook.Authors) {
+				log.Printf("[CROSS-FORMAT MATCH] Found Hardcover book via ebook search (title+author): %s", hcBook.HardcoverID)
+				s.saveBookIdentity(entry, hcBook.HardcoverID)
+				return hcBook.HardcoverID, hcBook.Title
+			}
+		}
+	}
+
+	return "", ""
 }

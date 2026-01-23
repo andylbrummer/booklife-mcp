@@ -8,6 +8,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/user/booklife-mcp/internal/sync"
+	"github.com/user/booklife-mcp/internal/tbr"
 )
 
 // SyncInput for the unified sync tool
@@ -69,8 +70,10 @@ func (s *Server) handleSync(ctx context.Context, req *mcp.CallToolRequest, input
 		return s.handleSyncDetails(ctx, target, input.EntryID)
 	case "unmatched":
 		return s.handleSyncUnmatched(ctx, target, input.UnmatchedType)
+	case "sync_all":
+		return s.handleSyncAll(ctx, target, input.Limit, input.DryRun)
 	default:
-		return nil, nil, NewInvalidActionError("sync", action, []string{"status", "preview", "run", "details", "unmatched"})
+		return nil, nil, NewInvalidActionError("sync", action, []string{"status", "preview", "run", "details", "unmatched", "sync_all"})
 	}
 }
 
@@ -187,6 +190,11 @@ func (s *Server) handleSyncRun(ctx context.Context, target string, limit int, dr
 	adapter := sync.NewStoreAdapter(s.historyStore)
 	syncer := sync.NewHardcoverSync(s.hardcover, adapter)
 	syncer.SetDryRun(dryRun)
+
+	// Enable cross-format ISBN lookup via Libby
+	if s.libby != nil {
+		syncer.SetLibbySearcher(s.libby)
+	}
 
 	// Run sync
 	summary, err := syncer.SyncReturnedBooks(ctx)
@@ -422,4 +430,149 @@ func (s *Server) handleSyncUnmatched(ctx context.Context, target, filterType str
 			"count":       len(entries),
 			"entries":     unmatched,
 		}, nil
+}
+
+// handleSyncAll performs a comprehensive sync: history + enrichment + Libby tag metadata
+func (s *Server) handleSyncAll(ctx context.Context, target string, limit int, dryRun bool) (*mcp.CallToolResult, any, error) {
+	var sb strings.Builder
+	sb.WriteString("🔄 Comprehensive Sync\n")
+	sb.WriteString("Running: Import new books → Sync history → Enrich metadata → Cache tags\n\n")
+
+	stats := make(map[string]any)
+
+	// Step 0: Import current Libby loans to local history
+	sb.WriteString("━━━ Step 0: Importing Current Libby Loans ━━━\n\n")
+
+	if s.libby != nil && s.historyStore != nil {
+		loans, err := s.libby.GetLoans(ctx)
+		if err == nil {
+			count := 0
+			for _, loan := range loans {
+				if err := s.historyStore.ImportCurrentLoan(loan); err != nil {
+					// Log error but continue
+				} else {
+					count++
+				}
+			}
+			sb.WriteString(fmt.Sprintf("✅ Imported %d current loans to local history\n", count))
+			stats["loans_imported"] = count
+		} else {
+			sb.WriteString(fmt.Sprintf("⚠️  Could not fetch loans: %v\n", err))
+		}
+	} else {
+		sb.WriteString("⚠️  Libby loan import skipped - not configured\n")
+	}
+	sb.WriteString("\n")
+
+	// 1. History Sync (Libby → Hardcover)
+	sb.WriteString("━━━ Step 1: Syncing Reading History ━━━\n\n")
+
+	adapter := sync.NewStoreAdapter(s.historyStore)
+	syncer := sync.NewHardcoverSync(s.hardcover, adapter)
+	syncer.SetDryRun(dryRun)
+
+	// Enable cross-format ISBN lookup via Libby
+	if s.libby != nil {
+		syncer.SetLibbySearcher(s.libby)
+	}
+
+	// Run sync
+	summary, err := syncer.SyncReturnedBooks(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("sync failed: %w", err)
+	}
+
+	sb.WriteString(fmt.Sprintf("✅ Synced %d books (failed: %d, skipped: %d)\n",
+		summary.Successful, summary.Failed, summary.Skipped))
+	if dryRun {
+		sb.WriteString("   (DRY RUN - no changes made)\n")
+	}
+	sb.WriteString("\n")
+	stats["history_synced"] = summary.Successful
+	stats["history_failed"] = summary.Failed
+	stats["history_skipped"] = summary.Skipped
+
+	// 2. Enrichment
+	sb.WriteString("━━━ Step 2: Enriching Book Metadata ━━━\n\n")
+
+	if s.historyStore != nil {
+		unenriched, _ := s.historyStore.GetUnenrichedCount()
+		if unenriched > 0 {
+			sb.WriteString(fmt.Sprintf("Found %d books needing enrichment\n", unenriched))
+			sb.WriteString("Starting background enrichment job...\n")
+
+			// Initialize enrichment service if needed
+			if err := s.initRecommendationServices(); err != nil {
+				sb.WriteString(fmt.Sprintf("⚠️  Enrichment failed to initialize: %v\n", err))
+			} else {
+				// Start enrichment (this runs in background)
+				job, err := s.enrichmentService.EnrichHistoryBackground(ctx, false)
+				if err != nil {
+					sb.WriteString(fmt.Sprintf("⚠️  Enrichment failed to start: %v\n", err))
+				} else {
+					progress := job.GetProgress()
+					sb.WriteString(fmt.Sprintf("✅ Started enrichment job %s for %d books\n", job.ID, progress.TotalBooks))
+					sb.WriteString("   Use enrichment_status to monitor progress\n")
+					stats["enrichment_job_id"] = job.ID
+					stats["enrichment_total"] = progress.TotalBooks
+				}
+			}
+		} else {
+			sb.WriteString("✅ All books already enriched\n")
+			stats["enrichment_needed"] = 0
+		}
+	} else {
+		sb.WriteString("⚠️  Enrichment skipped - history store not available\n")
+	}
+	sb.WriteString("\n")
+
+	// 3. Libby Tag Metadata Sync
+	sb.WriteString("━━━ Step 3: Syncing Libby Tag Metadata ━━━\n\n")
+
+	if s.libby != nil && s.tbrStore != nil {
+		loans, err := s.libby.GetLoans(ctx)
+		if err == nil {
+			holds, err := s.libby.GetHolds(ctx)
+			if err == nil {
+				// Extract book info from loans and holds
+				bookInfos := append(
+					tbr.ExtractBookInfoFromLoans(loans),
+					tbr.ExtractBookInfoFromHolds(holds)...,
+				)
+
+				tagSyncer := tbr.NewLibbyTagSyncer(s.tbrStore, s.libby)
+				processed, successful, failed, err := tagSyncer.SyncTagMetadataWithSearchFallback(ctx, bookInfos)
+				if err != nil {
+					sb.WriteString(fmt.Sprintf("⚠️  Tag metadata sync failed: %v\n", err))
+				} else {
+					sb.WriteString(fmt.Sprintf("✅ Tag metadata: %d processed, %d successful, %d failed\n",
+						processed, successful, failed))
+					stats["tag_metadata_processed"] = processed
+					stats["tag_metadata_successful"] = successful
+					stats["tag_metadata_failed"] = failed
+				}
+			} else {
+				sb.WriteString(fmt.Sprintf("⚠️  Could not fetch holds: %v\n", err))
+			}
+		} else {
+			sb.WriteString(fmt.Sprintf("⚠️  Could not fetch loans: %v\n", err))
+		}
+	} else {
+		if s.libby == nil {
+			sb.WriteString("⚠️  Libby tag sync skipped - Libby not configured\n")
+		} else {
+			sb.WriteString("⚠️  Libby tag sync skipped - TBR store not available\n")
+		}
+	}
+	sb.WriteString("\n")
+
+	// Summary
+	sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━\n")
+	sb.WriteString("✅ Comprehensive sync complete!\n")
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: sb.String()},
+		},
+	}, stats, nil
 }

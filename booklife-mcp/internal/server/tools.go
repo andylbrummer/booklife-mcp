@@ -88,22 +88,58 @@ func formatPagingFooter(paged PagedResult, itemCount int) string {
 
 // createResponseMeta creates automation metadata for AI agents
 // This helps AI agents understand the response and suggest next actions
+// Follows MCP best practices with nested automation structure
 func createResponseMeta(hasResults bool, actionNeeded bool, suggestedNext []string, automationFriendly bool, confidence float64) map[string]any {
-	meta := map[string]any{
-		"has_results":         hasResults,
-		"action_needed":       actionNeeded,
-		"automation_friendly": automationFriendly,
-	}
+	automation := map[string]any{}
 
 	if len(suggestedNext) > 0 {
-		meta["suggested_next"] = suggestedNext
+		automation["next_actions"] = suggestedNext
 	}
 
 	if confidence > 0 {
-		meta["confidence"] = confidence
+		automation["confidence"] = confidence
 	}
 
-	return meta
+	return map[string]any{
+		"automation": automation,
+	}
+}
+
+// createSearchMeta creates standardized automation metadata for search tools
+func createSearchMeta(resultCount int, truncated bool, nextActions []string) map[string]any {
+	automation := map[string]any{
+		"result_count": resultCount,
+		"truncated":    truncated,
+	}
+
+	if len(nextActions) > 0 {
+		automation["next_actions"] = nextActions
+	}
+
+	return map[string]any{
+		"automation": automation,
+	}
+}
+
+// createOperationMeta creates standardized automation metadata for operations (add, remove, update)
+func createOperationMeta(success bool, confirmable bool, destructive bool, nextActions []string) map[string]any {
+	automation := map[string]any{
+		"success":     success,
+		"confirmable": confirmable,
+	}
+
+	if destructive {
+		automation["destructive"] = true
+		automation["reversible"] = false
+	}
+
+	if len(nextActions) > 0 {
+		automation["next_actions"] = nextActions
+	}
+
+	return map[string]any{
+		"automation": automation,
+	}
 }
 
 // formatIDsForDisplay creates a unified ID format for cross-tool usage
@@ -310,14 +346,6 @@ Example: {"workflow": "find_and_read"} - Step-by-step workflow guide`,
 	// === Hardcover (Reading Tracker) ===
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
-		Name: "hardcover_search_books",
-		Description: `Search for books in Hardcover catalog.
-Returns detailed book information with identifiers for cross-tool usage.
-Example: {"query": "Project Hail Mary"}
-Example: {"query": "Andy Weir", "page_size": 5, "sort_by": "rating"}`,
-	}, s.handleSearchBooks)
-
-	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name: "hardcover_get_my_library",
 		Description: `Get your reading list from Hardcover.
 Progressive detail levels for token efficiency.
@@ -355,14 +383,6 @@ Example: {"query": "Brandon Sanderson", "available": true}`,
 		}, s.handleSearchLibrary)
 
 		mcp.AddTool(s.mcpServer, &mcp.Tool{
-			Name: "libby_check_availability",
-			Description: `Check if a book is available at the library.
-Returns detailed availability with media_id for placing holds.
-Example: {"isbn": "9780593135204"}
-Example: {"title": "Mistborn", "author": "Brandon Sanderson"}`,
-		}, s.handleCheckAvailability)
-
-		mcp.AddTool(s.mcpServer, &mcp.Tool{
 			Name: "libby_get_loans",
 			Description: `Get your current Libby loans with due dates.
 Returns detailed loan information.
@@ -385,27 +405,45 @@ Example: {"media_id": "12345", "format": "audiobook", "auto_borrow": true}`,
 		}, s.handlePlaceHold)
 
 		mcp.AddTool(s.mcpServer, &mcp.Tool{
-			Name: "libby_get_tags",
-			Description: `Get your Libby book tags for organization.
-Returns all tags and the media IDs tagged with each.
-Example: {} - returns all tags
-Example: {"tag": "favorites"} - returns books tagged as "favorites"`,
-		}, s.handleGetTags)
+			Name: "libby_sync_tag_metadata",
+			Description: `Sync full book information for all Libby tagged books to local cache.
+
+Purpose: Fetch complete metadata (title, author, ISBN, cover, format, availability)
+for all books you've tagged in Libby and store it locally for offline access.
+
+This is useful for:
+  - Browsing tagged books offline
+  - Building reading lists and recommendations
+  - Organizing your library collection
+  - Cross-referencing with other services
+
+The sync fetches data from current loans and holds, so books you've returned
+may have limited metadata unless they're still in your holds.
+
+Example: {} - Sync all tagged books
+
+After syncing, use libby_tag_metadata_list to browse the cached data.`,
+		}, s.handleLibbyTagMetadataSync)
 
 		mcp.AddTool(s.mcpServer, &mcp.Tool{
-			Name: "libby_add_tag",
-			Description: `Add a tag to a library book for organization.
-Requires media_id from libby_search or libby_get_loans.
-Example: {"media_id": "12345", "tag": "favorites"}
-Example: {"media_id": "12345", "tag": "sci-fi"}`,
-		}, s.handleAddTag)
+			Name: "libby_tag_metadata_list",
+			Description: `List cached Libby tag metadata with full book information.
 
-		mcp.AddTool(s.mcpServer, &mcp.Tool{
-			Name: "libby_remove_tag",
-			Description: `Remove a tag from a library book.
-Requires media_id and the tag to remove.
-Example: {"media_id": "12345", "tag": "favorites"}`,
-		}, s.handleRemoveTag)
+Shows locally cached book details for all tagged items.
+This data is populated by libby_sync_tag_metadata.
+
+Filters:
+  tag (optional): Show only books with this tag
+
+Pagination:
+  page (default: 1)
+  page_size (default: 20, max: 100)
+
+Examples:
+  {} - List all cached tagged books
+  {"tag": "favorites"} - Only books tagged as favorites
+  {"tag": "sci-fi", "page_size": 50} - First 50 sci-fi tagged books`,
+		}, s.handleLibbyTagMetadataList)
 	}
 
 	// === Unified Actions ===
@@ -423,14 +461,6 @@ Example: {"query": "The Name of the Wind"}`,
 Returns prioritized options with identifiers.
 Example: {"isbn": "9780756404741"}`,
 	}, s.handleBestWayToRead)
-
-	mcp.AddTool(s.mcpServer, &mcp.Tool{
-		Name: "booklife_add_to_tbr",
-		Description: `Add a book to your TBR list, optionally placing a library hold.
-Can use ISBN from search results.
-Example: {"isbn": "9780756404741", "place_hold": true}
-Example: {"title": "The Way of Kings", "author": "Brandon Sanderson"}`,
-	}, s.handleAddToTBR)
 
 	// === Local History Store ===
 
@@ -452,16 +482,10 @@ Example: {}`,
 		Name: "history_get",
 		Description: `Get reading history from local store with pagination.
 Returns all imported timeline entries and synced loans.
-Example: {"page": 1, "page_size": 20}`,
+Supports optional query parameter for searching.
+Example: {"page": 1, "page_size": 20}
+Example: {"query": "Sanderson", "page": 1}`,
 	}, s.handleGetLocalHistory)
-
-	mcp.AddTool(s.mcpServer, &mcp.Tool{
-		Name: "history_search",
-		Description: `Search reading history by title or author.
-Searches all imported timeline entries for matches.
-Example: {"query": "Sanderson", "page": 1, "page_size": 20}
-Example: {"query": "Mistborn"}`,
-	}, s.handleSearchLocalHistory)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name: "history_stats",
@@ -470,56 +494,36 @@ Returns breakdowns by format, library, year, and totals.
 Example: {}`,
 	}, s.handleGetHistoryStats)
 
-	mcp.AddTool(s.mcpServer, &mcp.Tool{
-		Name: "history_export_for_import",
-		Description: `Export reading history as Goodreads-compatible CSV for batch importing.
-Generates a CSV file that can be imported into Hardcover, Goodreads, or LibraryThing.
-
-Filters (optional, default exports all returned books):
-  activity  - "Returned" (default), "Borrowed", "Reserved", "CheckedIn"
-  format    - "audiobook", "ebook", "book", "magazine"
-  limit     - Maximum number of books to export (default: no limit)
-
-Output:
-  Returns file path and count of exported books.
-
-Examples:
-  {} - Export all returned books (complete library)
-  {"activity": "Borrowed"} - Export all checkouts
-  {"format": "audiobook", "limit": 50} - Export 50 most recent audiobooks`,
-	}, s.handleExportForImport)
-
 	// === Sync (Progressive Disclosure) ===
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name: "sync",
-		Description: `Sync reading history between services (Libby → Hardcover).
-Marks returned library books as "read" in Hardcover.
+		Description: `Universal sync for reading history, enrichment, and Libby tag metadata.
+
+Flow: Libby → Local ↔ Hardcover
+  1. Sync Libby history to local database
+  2. Mark returned books as "read" in Hardcover
+  3. Enrich books with metadata from Open Library/Google Books
+  4. Cache full book information for Libby tagged items
 
 Actions (progressive disclosure):
-  status  - Show pending count and last sync (default)
-  preview - List books that will be synced
-  run     - Execute sync, show summary
-  details - Show sync state for specific entry
+  status   - Show pending count and last sync (default)
+  preview  - List books that will be synced
+  run      - Execute history sync only
+  sync_all - Comprehensive sync (history + enrichment + tag metadata)
+  details  - Show sync state for specific entry
+  unmatched - Show books that failed to match
 
 Examples:
   {} or {"action": "status"} - quick status check
   {"action": "preview"} - see what will sync
   {"action": "run"} - sync returned books to Hardcover
-  {"action": "run", "dry_run": true} - test without changes
+  {"action": "sync_all"} - full comprehensive sync (recommended)
+  {"action": "sync_all", "dry_run": true} - test without changes
   {"action": "details", "entry_id": "abc123"} - entry details`,
 	}, s.handleSync)
 
 	// === Content-Based Recommendations (LLM-Powered) ===
-
-	mcp.AddTool(s.mcpServer, &mcp.Tool{
-		Name: "book_get_with_analysis",
-		Description: `Get detailed book analysis with enriched metadata.
-Shows themes, topics, mood, complexity, and related books.
-Requires the book to be enriched first (use enrichment_enrich_history).
-
-Example: {"title": "Project Hail Mary", "author": "Andy Weir"}`,
-	}, s.handleGetBookWithAnalysis)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name: "book_find_similar",
@@ -567,17 +571,102 @@ Returns: Job status (pending/running/completed/failed/cancelled), processed/succ
 Use this to check progress if MCP notifications are not visible or for historical job data.`,
 	}, s.handleEnrichmentStatus)
 
-	mcp.AddTool(s.mcpServer, &mcp.Tool{
-		Name: "enrichment_cancel",
-		Description: `Cancels a running background enrichment job.
+	// === Unified TBR (To Be Read) Management ===
 
-Purpose: Stop long-running enrichment operations gracefully. Job stops after current book completes.
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name: "tbr_list",
+		Description: `List your unified TBR (to-be-read) list.
+Combines books from Hardcover, Libby holds/tags, and manually added physical books.
+
+Filters:
+  source (optional): Filter by source - "physical", "hardcover", "libby"
+
+Pagination:
+  page (default: 1)
+  page_size (default: 20, max: 100)
+
+Examples:
+  {} - List all TBR books
+  {"source": "libby"} - Only Libby books
+  {"source": "hardcover", "page_size": 50} - First 50 Hardcover TBR books`,
+	}, s.handleTBRList)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name: "tbr_search",
+		Description: `Search your TBR list by title or author.
 
 Parameters:
-  job_id (string, required): Job ID to cancel. Get from enrich_history response or enrichment_status.
+  query (required): Search term
+  source (optional): Filter by source
 
-Returns: Cancellation confirmation with job ID.
+Examples:
+  {"query": "Sanderson"} - Find all Sanderson books in TBR
+  {"query": "Mistborn", "source": "libby"} - Search only Libby TBR`,
+	}, s.handleTBRSearch)
 
-Note: Already-enriched books remain enriched. Partial progress is preserved.`,
-	}, s.handleEnrichmentCancel)
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name: "tbr_add",
+		Description: `Add a book to your TBR list manually (for physical books or custom entries).
+
+Required:
+  title, author
+
+Optional:
+  subtitle, isbn10, isbn13, publisher, published_date, page_count
+  description, cover_url, genres (array)
+  series_name, series_position
+  notes, priority (0-10, higher = more important)
+  source (default: "physical")
+
+Examples:
+  {"title": "The Name of the Wind", "author": "Patrick Rothfuss"}
+  {"title": "Mistborn", "author": "Sanderson", "priority": 5, "notes": "Recommended by friend"}
+  {"title": "Project Hail Mary", "author": "Andy Weir", "isbn13": "9780593135204", "source": "physical"}`,
+	}, s.handleTBRAdd)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name: "tbr_remove",
+		Description: `Remove a book from your TBR list.
+
+Use either:
+  id (from tbr_list or tbr_search)
+  OR title + author
+
+Examples:
+  {"id": 42}
+  {"title": "The Name of the Wind", "author": "Patrick Rothfuss"}`,
+	}, s.handleTBRRemove)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name: "tbr_sync",
+		Description: `Sync TBR from external sources (Hardcover, Libby).
+
+Actions:
+  sync_hardcover - Sync Hardcover TBR (want-to-read list)
+  sync_libby_holds - Sync Libby holds to TBR
+  sync_libby_tags - Sync Libby tagged books to TBR (with full metadata)
+  sync_all - Sync everything
+
+Examples:
+  {"action": "sync_hardcover"}
+  {"action": "sync_libby_tags"}
+  {"action": "sync_all"}
+
+Note: sync_libby_tags fetches full book information for all tagged books
+and stores it locally for offline access.`,
+	}, s.handleTBRSync)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name: "tbr_stats",
+		Description: `Get statistics about your TBR list.
+
+Shows:
+  - Total books
+  - Breakdown by source (physical, hardcover, libby)
+  - Libby availability stats
+  - Tagged books count
+
+Example:
+  {}`,
+	}, s.handleTBRStats)
 }

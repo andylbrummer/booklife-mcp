@@ -16,6 +16,7 @@ import (
 	"github.com/user/booklife-mcp/internal/providers/hardcover"
 	"github.com/user/booklife-mcp/internal/providers/libby"
 	"github.com/user/booklife-mcp/internal/providers/openlibrary"
+	"github.com/user/booklife-mcp/internal/tbr"
 )
 
 // Server wraps the MCP server with BookLife providers
@@ -31,6 +32,9 @@ type Server struct {
 
 	// Local history store
 	historyStore *history.Store
+
+	// Local TBR store
+	tbrStore *tbr.Store
 
 	// Recommendation services (lazy initialization)
 	enrichmentService *enrichment.Service
@@ -81,6 +85,13 @@ func (s *Server) initProviders() error {
 		return fmt.Errorf("initializing history store: %w", err)
 	}
 	s.historyStore = store
+
+	// Initialize TBR store
+	tbrStore, err := tbr.NewStore(dataDir)
+	if err != nil {
+		return fmt.Errorf("initializing TBR store: %w", err)
+	}
+	s.tbrStore = tbrStore
 
 	// Hardcover
 	if s.cfg.Providers.Hardcover.Enabled {

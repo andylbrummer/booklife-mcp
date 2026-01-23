@@ -383,12 +383,14 @@ func (c *Client) Search(ctx context.Context, query string, formats []string, ava
 				avail.EbookAvailable = format.Available
 				avail.EbookCopies = format.OwnedCopies
 				avail.EbookWaitlistSize = format.HoldsCount
+				avail.EbookID = format.ID // Overdrive format ID (often ISBN)
 			}
 			if format.IsAudiobook {
 				avail.Formats = append(avail.Formats, "audiobook")
 				avail.AudiobookAvailable = format.Available
 				avail.AudiobookCopies = format.OwnedCopies
 				avail.AudiobookWaitlistSize = format.HoldsCount
+				avail.AudiobookID = format.ID // Overdrive format ID (often ISBN)
 			}
 		}
 
