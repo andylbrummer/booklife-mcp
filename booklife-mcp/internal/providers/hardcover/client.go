@@ -358,25 +358,75 @@ func (c *Client) GetUserBooks(ctx context.Context, status string, offset, limit 
 }
 
 // UpdateBookStatus updates a book's status in the user's library
-func (c *Client) UpdateBookStatus(ctx context.Context, bookID, status string, progress int, rating float64) error {
+// userBookID is the user_book.id (not book_id) from get_my_library
+func (c *Client) UpdateBookStatus(ctx context.Context, userBookID, status string, progress int, rating float64) error {
 	statusID := getStatusID(status)
 
-	var m struct {
-		UpdateUserBook struct {
-			ID string `graphql:"id"`
-		} `graphql:"update_user_books(where: {book_id: {_eq: $bookID}}, _set: {status_id: $status, reading_progress_percent: $progress, rating: $rating})"`
+	// Build the update object - only include fields that are being set
+	updateObj := map[string]interface{}{
+		"status_id": statusID,
+	}
+
+	// Hardcover API uses update_user_book(id, object) not the Hasura-style mutation
+	query := `mutation UpdateUserBook($id: Int!, $object: UserBookUpdateInput!) {
+		update_user_book(id: $id, object: $object) {
+			id
+		}
+	}`
+
+	// Parse userBookID as int
+	var id int
+	if _, err := fmt.Sscanf(userBookID, "%d", &id); err != nil {
+		return fmt.Errorf("invalid user_book id: %s", userBookID)
 	}
 
 	variables := map[string]interface{}{
-		"bookID":   bookID,
-		"status":   statusID,
-		"progress": progress,
-		"rating":   rating,
+		"id":     id,
+		"object": updateObj,
 	}
 
-	err := c.client.Mutate(ctx, &m, variables)
+	// Use raw GraphQL request since the struct-based client doesn't support this mutation style
+	reqBody := map[string]interface{}{
+		"query":     query,
+		"variables": variables,
+	}
+
+	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
-		return fmt.Errorf("update status mutation failed: %w", err)
+		return fmt.Errorf("marshaling request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", c.endpoint, bytes.NewReader(jsonBody))
+	if err != nil {
+		return fmt.Errorf("creating request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Data struct {
+			UpdateUserBook struct {
+				ID int `json:"id"`
+			} `json:"update_user_book"`
+		} `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return fmt.Errorf("decoding response: %w", err)
+	}
+
+	if len(result.Errors) > 0 {
+		return fmt.Errorf("update status mutation failed: %s", result.Errors[0].Message)
 	}
 
 	return nil
