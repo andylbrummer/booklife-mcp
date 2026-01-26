@@ -333,18 +333,21 @@ func (c *Client) Search(ctx context.Context, query string, formats []string, ava
 
 	var result struct {
 		Items []struct {
-			ID           string `json:"id"`
-			Title        string `json:"title"`
-			Subtitle     string `json:"subtitle"`
-			FirstCreator string `json:"firstCreatorName"` // This is a string, not an object
-			Formats      []struct {
-				ID          string `json:"id"`
-				Name        string `json:"name"`
-				IsAudiobook bool   `json:"isAudiobook"`
-				IsEbook     bool   `json:"isEbook"`
-				Available   bool   `json:"isAvailable"`
-				OwnedCopies int    `json:"ownedCopies"`
-				HoldsCount  int    `json:"holdsCount"`
+			ID             string `json:"id"`
+			Title          string `json:"title"`
+			Subtitle       string `json:"subtitle"`
+			FirstCreator   string `json:"firstCreatorName"` // This is a string, not an object
+			IsAvailable    bool   `json:"isAvailable"`      // Item-level availability
+			AvailableCopies int   `json:"availableCopies"`
+			OwnedCopies    int    `json:"ownedCopies"`
+			HoldsCount     int    `json:"holdsCount"`
+			Type           struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"type"`
+			Formats []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
 			} `json:"formats"`
 			Covers struct {
 				Cover300Wide struct {
@@ -371,26 +374,33 @@ func (c *Client) Search(ctx context.Context, query string, formats []string, ava
 			CoverURL:    item.Covers.Cover300Wide.Href,
 		}
 
-		// Add availability info
+		// Add availability info - availability is at item level, not format level
 		avail := &models.LibraryAvailability{
 			LibraryName: lib.Name,
 			MediaID:     item.ID,
 		}
 
-		for _, format := range item.Formats {
-			if format.IsEbook {
-				avail.Formats = append(avail.Formats, "ebook")
-				avail.EbookAvailable = format.Available
-				avail.EbookCopies = format.OwnedCopies
-				avail.EbookWaitlistSize = format.HoldsCount
-				avail.EbookID = format.ID // Overdrive format ID (often ISBN)
+		// Determine media type from item.Type
+		isEbook := item.Type.ID == "ebook"
+		isAudiobook := item.Type.ID == "audiobook"
+
+		if isEbook {
+			avail.Formats = append(avail.Formats, "ebook")
+			avail.EbookAvailable = item.IsAvailable
+			avail.EbookCopies = item.OwnedCopies
+			avail.EbookWaitlistSize = item.HoldsCount
+			// Get ISBN from first format if available
+			if len(item.Formats) > 0 {
+				avail.EbookID = item.Formats[0].ID
 			}
-			if format.IsAudiobook {
-				avail.Formats = append(avail.Formats, "audiobook")
-				avail.AudiobookAvailable = format.Available
-				avail.AudiobookCopies = format.OwnedCopies
-				avail.AudiobookWaitlistSize = format.HoldsCount
-				avail.AudiobookID = format.ID // Overdrive format ID (often ISBN)
+		}
+		if isAudiobook {
+			avail.Formats = append(avail.Formats, "audiobook")
+			avail.AudiobookAvailable = item.IsAvailable
+			avail.AudiobookCopies = item.OwnedCopies
+			avail.AudiobookWaitlistSize = item.HoldsCount
+			if len(item.Formats) > 0 {
+				avail.AudiobookID = item.Formats[0].ID
 			}
 		}
 
