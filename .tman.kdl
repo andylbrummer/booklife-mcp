@@ -1,8 +1,8 @@
 defaults {
-    stall "5m"
+    stall "30m"
     max-mem 8192
-    max-cpu 400
     max-parallel 2
+    queue-timeout "30m"
 }
 
 alias "test" {
