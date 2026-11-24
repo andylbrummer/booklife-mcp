@@ -1,5 +1,6 @@
 {
   "enabledPlugins": {
-    "mcp-architect@standardbeagle-tools": true
+    "mcp-architect@standardbeagle-tools": true,
+    "plugin-dev-helper@plugin-dev-marketplace": true
   }
 }

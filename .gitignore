@@ -33,3 +33,7 @@ Thumbs.db
 # Environment / secrets
 .env
 .env.*
+
+# tman shims
+/test
+/test.cmd
